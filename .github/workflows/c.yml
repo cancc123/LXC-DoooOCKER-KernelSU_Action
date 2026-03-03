@@ -101,18 +101,17 @@ jobs:
         done
         
         # 【关键修复】修改编译器选项
+        # 注意：这里我们不再尝试用复杂的 -I 参数，而是物理放置文件
         export CC="ccache clang"
         export HOSTCC="ccache clang"
         export HOSTCXX="ccache clang++"
-        export HOSTCFLAGS="-I$PWD/out/include"
-        export HOSTCXXFLAGS="-I$PWD/out/include"
+        # 移除可能导致混乱的 HOSTCFLAGS
+        # export HOSTCFLAGS="-I$PWD/out/include" 
         export CLANG_TRIPLE=aarch64-linux-gnu-
         export CROSS_COMPILE=aarch64-linux-gnu-
         export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
         
-        # 【核心变更】不使用 LLVM 自带的汇编器 (LLVM_IAS)，改用 GNU as
-        # 移除了: export LLVM_IAS=1
-        # 显式指定使用系统 GNU 汇编器
+        # 【核心变更】使用 GNU 汇编器 (解决之前的汇编报错)
         export AS=aarch64-linux-gnu-as
         export LD=ld.lld
         export AR=llvm-ar
@@ -120,8 +119,9 @@ jobs:
         export OBJCOPY=llvm-objcopy
         export OBJDUMP=llvm-objdump
         export STRIP=llvm-strip
-        export LLVM=1 # 保留 LLVM=1 仅用于链接器等工具，但汇编交给 GNU
-        
+        export LLVM=1
+        # 不导出 LLVM_IAS=1，避免汇编器问题
+    
         echo "=== 环境检查 ==="
         echo "Clang: $(clang --version | head -n1)"
         echo "Python: $(python --version)"
@@ -150,28 +150,46 @@ jobs:
         make O=out ARCH=arm64 olddefconfig
     
         # ===================================================================
-        # 【保留】之前的物理修复（虽然可能不再需要，但保留无害）
+        # 【终极核弹】物理修复 asm-offsets.h 缺失问题
         # ===================================================================
-        echo "=== FORCE FIX: Ensuring generated files exist ==="
-        mkdir -p include/generated
-        make O=out ARCH=arm64 scripts
+        echo "=== NUKING asm-offsets.h ERROR ==="
+        
+        # 1. 强制生成 scripts 和 headers，这会在 out/include/generated/ 下生成 asm-offsets.h
+        echo "Generating required headers..."
+        make O=out ARCH=arm64 headers_install
+        
+        # 2. 在源码根目录创建 generated 文件夹
+        # 编译器报错 #include <generated/...> 时，通常会在源码根目录下找
+        echo "Creating patch directory..."
+        mkdir -p $GITHUB_WORKSPACE/kernel_workspace/android-kernel/generated
+        
+        # 3. 检查文件是否生成，并复制到源码根目录
         if [ -f out/include/generated/asm-offsets.h ]; then
-          cp out/include/generated/asm-offsets.h include/generated/asm-offsets.h
+          cp out/include/generated/asm-offsets.h $GITHUB_WORKSPACE/kernel_workspace/android-kernel/generated/asm-offsets.h
+          echo " SUCCESS: File copied to source root"
+          ls -la $GITHUB_WORKSPACE/kernel_workspace/android-kernel/generated/
+        else
+          echo " ERROR: asm-offsets.h was not generated in out/include/generated/"
+          exit 1
         fi
     
         # 3. Clang 兼容 patch (核心修复区)
+        # 注意：这里我们只保留必要的 patch，避免干扰
         echo "=== Applying Clang Compatibility Patches ==="
         
-        # 修复 stack_pointer.h (保持不变)
+        # 修复 1: stack_pointer.h
         if [ -f arch/arm64/include/asm/stack_pointer.h ]; then
+          echo "Patching stack_pointer.h..."
+          # 清理旧的 register 变量声明
           sed -i '/register unsigned long current_stack_pointer/d' arch/arm64/include/asm/stack_pointer.h
           sed -i '/static.*get_current_sp/d' arch/arm64/include/asm/stack_pointer.h
+          
+          # 写入内联汇编函数
           cat > arch/arm64/include/asm/stack_pointer.h << 'EOF'
         #ifndef __ASM_STACK_POINTER_H
         #define __ASM_STACK_POINTER_H
         
-        #include <asm/asm-offsets.h>
-        
+        // 注意：这里不再 include asm-offsets.h，因为我们只是读寄存器
         static __always_inline unsigned long get_current_sp(void)
         {
         unsigned long sp;
@@ -181,12 +199,15 @@ jobs:
         
         #endif /* __ASM_STACK_POINTER_H */
         EOF
+              # 全局替换引用
               find . -type f -name "*.h" -o -name "*.c" | xargs sed -i 's/current_stack_pointer/get_current_sp()/g' || true
+              echo "stack_pointer.h patched."
             fi
             
-            # 修复 spinlock.h (保持不变)
+            # 修复 2: spinlock.h (修复 "I" constraint 错误)
             if [ -f arch/arm64/include/asm/spinlock.h ]; then
               sed -i 's/"I" (1 << TICKET_SHIFT)/"r" (1 << TICKET_SHIFT)/g' arch/arm64/include/asm/spinlock.h
+              echo "spinlock.h patched."
             fi
         
             # 5. 最终编译
