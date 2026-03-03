@@ -33,14 +33,14 @@ jobs:
         sudo -E apt-get -y -qq install build-essential gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi gcc-arm-linux-gnueabihf
         mkdir -p $GITHUB_WORKSPACE/kernel_workspace
     
-    - name: 下载谷歌clang编译器（推荐 android14）
+    - name: 下载谷歌 Clang12 编译器（必须用这个！）
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
         rm -rf clang-aosp
         mkdir -p clang-aosp
         git clone -q --depth=1 --single-branch \
           https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 \
-          -b android14-release clang-aosp
+          -b android12-release clang-aosp
           
     - name: 安装Python2 并设置为默认
       run: |
