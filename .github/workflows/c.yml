@@ -88,11 +88,14 @@ jobs:
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
         
+        # 清理 out/ 目录确保 patch 生效
+        rm -rf out/
+        
         # 1. 路径与工具链准备
         CLANG_DIR=$(find $GITHUB_WORKSPACE/kernel_workspace/clang-aosp -maxdepth 1 -name "clang-r*" | head -n1)
         export PATH=$CLANG_DIR/bin:$PATH
         
-        # 补全交叉工具链软链接（解决 objdump/as 等 not found）
+        # 补全交叉工具链软链接
         for tool in gcc g++ ld objcopy objdump nm strip ar as ranlib; do
           sudo ln -sf /usr/bin/aarch64-linux-gnu-$tool /usr/bin/aarch64-linux-android-$tool || true
           sudo ln -sf /usr/bin/arm-linux-gnueabi-$tool /usr/bin/arm-linux-android-eabi-$tool || true
@@ -110,19 +113,14 @@ jobs:
           sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/g' scripts/dtc/dtc-lexer.lex.c_shipped
         fi
         
-        # 3. Clang 兼容 patch（扩展全局替换 current_stack_pointer）
+        # 3. Clang 兼容 patch
         echo "=== Applying Clang Compatibility Patches ==="
-        # 替换 stack_pointer.h
         if [ -f arch/arm64/include/asm/stack_pointer.h ]; then
           sed -i 's/register unsigned long current_stack_pointer asm ("sp");/static __always_inline unsigned long get_current_sp(void) { unsigned long sp; asm volatile("mov %0, sp" : "=r"(sp)); return sp; }/g' arch/arm64/include/asm/stack_pointer.h
         fi
-        # 全局替换所有文件中的 current_stack_pointer 为 get_current_sp()
         find arch/arm64/ include/ -type f -name "*.h" -exec sed -i 's/current_stack_pointer/get_current_sp()/g' {} + || true
-        # 针对 percpu.h 的特定替换
-        sed -i 's/\*(const unsigned long \*)current_stack_pointer/\*(const unsigned long \*)get_current_sp()/g' arch/arm64/include/asm/percpu.h || true
-        # 针对 perf_event.h 的特定替换
+        sed -i 's/* (const unsigned long *)current_stack_pointer/* (const unsigned long *)get_current_sp()/g' arch/arm64/include/asm/percpu.h || true
         sed -i 's/ (regs)->sp = current_stack_pointer;/ (regs)->sp = get_current_sp();/g' arch/arm64/include/asm/perf_event.h || true
-        # spinlock immediate patch
         sed -i 's/"I" (1 << TICKET_SHIFT)/"r" (1 << TICKET_SHIFT)/g' arch/arm64/include/asm/spinlock.h
         
         # 4. 内核配置 + Stack Protector
@@ -133,12 +131,12 @@ jobs:
         scripts/config --file out/.config -e CC_STACKPROTECTOR_NONE
         make O=out ARCH=arm64 olddefconfig
         
-        # 5. pre-build scripts（用 -fcommon + 强制 HOSTAS 解决 -EL）
+        # 5. pre-build scripts
         echo "=== Pre-building scripts with -fcommon ==="
         export AS=aarch64-linux-gnu-as
         make -j$(nproc --all) O=out ARCH=arm64 HOSTCFLAGS="-O2 -fcommon" HOSTCXXFLAGS="-O2 -fcommon" HOSTAS="aarch64-linux-gnu-as" scripts
         
-        # 6. 最终编译（强制 AS + HOSTAS 解决 -EL in mod/empty.o）
+        # 6. 最终编译
         echo "=== Starting Kernel Build ==="
         export AS=aarch64-linux-gnu-as
         make -j$(nproc --all) O=out ARCH=arm64 \
