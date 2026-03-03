@@ -1,5 +1,4 @@
-
-name: 通用 低端机vvv888
+name: 通用 低端机 zyc clang23 简化配置
 on:
   workflow_dispatch:
 
@@ -12,6 +11,25 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     
+    - name: 修复Python 2/3兼容性问题 - 使用Python2
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        # 检查是否存在需要修复的Python脚本
+        if [ -f "tools/dct/DrvGen.py" ]; then
+          echo "发现DrvGen.py文件，确认使用Python2运行"
+          # 修改Shebang行或确保脚本能用Python2运行
+          sed -i '1s|^.*python.*$|#!/usr/bin/env python2|' tools/dct/DrvGen.py || echo "无法修改shebang，将使用python2命令运行"
+        fi
+        
+        # 确保系统中安装了Python2
+        if command -v python2 &> /dev/null; then
+          echo "Python2已安装"
+        else
+          echo "安装Python2"
+          sudo apt-get install -y python2
+        fi
+
+        
     - name: 环境变量配置
       run: |
         cat config.env | grep KERNEL_SOURCE= >> $GITHUB_ENV
@@ -29,13 +47,10 @@ jobs:
     - name: 构建编译内核环境
       run: |
         sudo apt-get update
-        sudo -E apt-get -y -qq install git make bc bison ccache openssl zip kmod cpio flex libelf-dev curl libssl-dev libtfm-dev wget device-tree-compiler ca-certificates python3 python2 binutils binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi
-        # 创建python别名以优先使用python2
-        echo 'alias python="/usr/bin/python2"' >> ~/.bashrc
-        echo 'alias python2="/usr/bin/python2"' >> ~/.bashrc
-        source ~/.bashrc
+        sudo -E apt-get -y -qq install git make bc bison ccache openssl zip kmod cpio flex libelf-dev curl libssl-dev libtfm-dev wget device-tree-compiler ca-certificates python3 binutils binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi
         mkdir -p $GITHUB_WORKSPACE/kernel_workspace
 
+    
     - name: 下载zyc-clang编译器
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
@@ -98,35 +113,14 @@ jobs:
         key: build-kernel-mido-kernel
         max-size: 2G
 
-    - name: 修复Python 2/3兼容性问题 - 使用Python2
-      run: |
-        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        # 检查是否存在需要修复的Python脚本
-        if [ -f "tools/dct/DrvGen.py" ]; then
-          echo "发现DrvGen.py文件，确认使用Python2运行"
-          # 修改Shebang行或确保脚本能用Python2运行
-          sed -i '1s|^.*python.*$|#!/usr/bin/env python2|' tools/dct/DrvGen.py || echo "无法修改shebang，将使用python2命令运行"
-        fi
-        
-        # 确保系统中安装了Python2
-        if command -v python2 &> /dev/null; then
-          echo "Python2已安装"
-        else
-          echo "安装Python2"
-          sudo apt-get install -y python2
-        fi
-
     - name: 开始编译内核
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
         export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-zyc/bin:$PATH
         export KBUILD_BUILD_HOST=17
         export KBUILD_BUILD_USER=HyperPower
-        # 设置Python环境变量确保使用Python2运行构建脚本
-        export PYTHON="/usr/bin/python2"
-        
         make -s -j$(nproc --all) O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
-        if [ ${{env.LLVM_CONFIG}} = "y" ]; then
+        if [ ${{env.LLVM_CONFIG}}=y ]; then
         make -j$(nproc --all) CC="ccache clang" CXX=clang++ O=out ARCH=arm64 CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-" LLVM=1 LLVM_IAS=1
         else
         make -j$(nproc --all) CC="ccache clang" CXX=clang++ O=out ARCH=arm64 CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-"
@@ -142,6 +136,7 @@ jobs:
         cp android-kernel/out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
         rm -rf AnyKernel3/.git* AnyKernel3/README.md
         rm -rf AnyKernel3/ramdisk AnyKernel3/modules AnyKernel3/patch
+    
     
     - name: 打包并上传
       uses: actions/upload-artifact@v4
