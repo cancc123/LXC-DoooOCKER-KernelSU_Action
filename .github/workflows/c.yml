@@ -90,51 +90,72 @@ jobs:
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
         
-        # 1. 路径与工具链准备
+        # 1. 路径与工具链准备 (保持不变)
         CLANG_DIR=$(find $GITHUB_WORKSPACE/kernel_workspace/clang-aosp -maxdepth 1 -name "clang-r*" | head -n1)
         export PATH=$CLANG_DIR/bin:$PATH
         
-        # 补全所有的交叉编译工具链软链接
-        # 解决 aarch64-linux-android-objdump: not found 等问题
-        for tool in gcc g++ ld objcopy objdump nm strip ar; do
-            sudo ln -sf /usr/bin/aarch64-linux-gnu-$tool /usr/bin/aarch64-linux-android-$tool || true
+        # 补全交叉工具链软链接 (保持不变)
+        for tool in gcc g++ ld objcopy objdump nm strip ar as ranlib; do
+          sudo ln -sf /usr/bin/aarch64-linux-gnu-$tool /usr/bin/aarch64-linux-android-$tool || true
+          sudo ln -sf /usr/bin/arm-linux-gnueabi-$tool /usr/bin/arm-linux-android-eabi-$tool || true
         done
+        
+        # 【重要修改】不再强制替换 /usr/bin/as，改用环境变量控制
+        # 这样可以保留系统 as 的功能，避免 -EL 参数错误
         
         echo "=== 环境检查 ==="
         echo "Clang: $(clang --version | head -n1)"
-        
-        # 2. 【深度修复】解决 yylloc 重定义报错 (针对 DTC)
-        echo "=== Patching DTC for yylloc multiple definition ==="
-        # 修正源码中的声明
-        sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/g' scripts/dtc/dtc-lexer.l || true
-        # 同时也修正可能已经生成的 shippied 文件，确保万无一失
-        if [ -f scripts/dtc/dtc-lexer.lex.c_shipped ]; then
-            sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/g' scripts/dtc/dtc-lexer.lex.c_shipped
-        fi
-        # 3. 【核心修复】源码补丁 (解决 Clang 12 寄存器报错)
-        echo "=== Applying Clang 12 Compatibility Patches ==="
-        if [ -f arch/arm64/include/asm/stack_pointer.h ]; then
-            sed -i 's/register unsigned long current_stack_pointer asm ("sp");/static __always_inline unsigned long get_current_sp(void) { unsigned long sp; asm volatile("mov %0, sp" : "=r"(sp)); return sp; }/g' arch/arm64/include/asm/stack_pointer.h
-            sed -i 's/current_stack_pointer/get_current_sp()/g' arch/arm64/include/asm/stack_pointer.h || true
-        fi
-        sed -i 's/"I" (1 << TICKET_SHIFT)/"r" (1 << TICKET_SHIFT)/g' arch/arm64/include/asm/spinlock.h
-        # 4. 内核配置与 Stack Protector 修复
-        make O=out ARCH=arm64 cezanne_user_defconfig
+        echo "Python: $(python --version)"
+    
+        # 2. 内核配置 + Stack Protector (先配置，生成原始文件)
+        # 【顺序调整】先进行配置，生成 .config 和原始头文件
+        make O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
+        echo "=== Disabling Stack Protector ==="
         scripts/config --file out/.config -d CC_STACKPROTECTOR_STRONG
         scripts/config --file out/.config -d CC_STACKPROTECTOR_REGULAR
         scripts/config --file out/.config -e CC_STACKPROTECTOR_NONE
         make O=out ARCH=arm64 olddefconfig
-        # 5. 【关键】注入 HOSTCFLAGS 绕过 DTC 检查并预编译 scripts
-        # 使用 -fcommon 彻底解决 yylloc 问题
-        echo "=== Pre-building scripts with -fcommon ==="
-        make -j$(nproc --all) O=out ARCH=arm64 HOSTCFLAGS="-O2 -fcommon" scripts
+    
+        # 3. 【关键修复】Clang 兼容 patch (必须在配置后执行！)
+        # 【顺序调整】在 olddefconfig 之后打补丁，防止被覆盖
+        echo "=== Applying Clang Compatibility Patches ==="
         
-        # 6. 【最终编译】
-        echo "=== Starting Build ==="
+        # 修复 stack_pointer.h
+        if [ -f arch/arm64/include/asm/stack_pointer.h ]; then
+          # 删除旧声明，添加新内联函数
+          sed -i '/register unsigned long current_stack_pointer/d' arch/arm64/include/asm/stack_pointer.h
+          sed -i '/#define current_stack_pointer/d' arch/arm64/include/asm/stack_pointer.h
+          sed -i '/^#ifndef __ASM_STACK_POINTER/a\\static __always_inline unsigned long get_current_sp(void) { unsigned long sp; asm volatile("mov %0, sp" : "=r"(sp)); return sp; }' arch/arm64/include/asm/stack_pointer.h
+        fi
+        
+        # 全局替换所有引用 (更彻底)
+        # 注意：这里使用 -i.bak 防止 sed 因文件锁定失败，最后删除 bak
+        find . -type f -name "*.h" -o -name "*.c" | xargs sed -i.bak 's/current_stack_pointer/get_current_sp()/g' || true
+        find . -type f -name "*.bak" -delete
+        
+        # 修复 spinlock.h (如果上面的全局替换没覆盖到，这里强制覆盖)
+        sed -i 's/"I" (1 << TICKET_SHIFT)/"r" (1 << TICKET_SHIFT)/g' arch/arm64/include/asm/spinlock.h
+    
+        # 4. DTC yylloc patch (保持不变)
+        echo "=== Patching DTC for yylloc multiple definition ==="
+        sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/g' scripts/dtc/dtc-lexer.l || true
+        sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/g' scripts/dtc/dtc-lexer.lex.c || true
+        if [ -f scripts/dtc/dtc-lexer.lex.c_shipped ]; then
+          sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/g' scripts/dtc/dtc-lexer.lex.c_shipped
+        fi
+    
+        # 5. pre-build scripts (保持不变)
+        echo "=== Pre-building scripts with -fcommon ==="
+        make -j$(nproc --all) O=out ARCH=arm64 HOSTCFLAGS="-O2 -fcommon" HOSTCXXFLAGS="-O2 -fcommon" scripts
+    
+        # 6. 最终编译 (关键：显式指定工具，不碰系统 as)
+        echo "=== Starting Kernel Build ==="
         make -j$(nproc --all) O=out ARCH=arm64 \
           CC="ccache clang" \
           HOSTCC="ccache clang" \
+          HOSTCXX="ccache clang++" \
           HOSTCFLAGS="-O2 -fcommon" \
+          HOSTCXXFLAGS="-O2 -fcommon" \
           CLANG_TRIPLE=aarch64-linux-gnu- \
           CROSS_COMPILE=aarch64-linux-gnu- \
           CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
@@ -144,9 +165,20 @@ jobs:
           OBJCOPY=llvm-objcopy \
           OBJDUMP=llvm-objdump \
           STRIP=llvm-strip \
+          # 【关键修改】显式指定汇编器为 LLVM 的，而不是依赖环境变量或系统软链接
+          AS="llvm-as" \
           LLVM=1 \
-          LLVM_IAS=0
+          LLVM_IAS=1 # 【关键修改】启用 LLVM 内建汇编器，避免调用外部 as
         
+        # 检查输出
+        if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
+          echo "Kernel built successfully"
+          exit 0
+        else
+          echo "Build failed"
+          exit 1
+        fi
+            
     - name: 准备打包内核
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
