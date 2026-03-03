@@ -88,45 +88,65 @@ jobs:
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
         
-        # Clang PATH + 符号链接修复（解决 gcc-version.sh 报错）
+        # 1. 环境变量与 Clang 配置
         CLANG_DIR=$(find $GITHUB_WORKSPACE/kernel_workspace/clang-aosp -maxdepth 1 -name "clang-r*" | head -n1)
         export PATH=$CLANG_DIR/bin:$PATH
+        export KBUILD_COMPILER_STRING="$(clang --version | head -n1)"
+        
+        # 修复 gcc-version.sh 报错（创建符号链接）
         sudo ln -sf /usr/bin/aarch64-linux-gnu-gcc /usr/bin/aarch64-linux-android-gcc || true
         sudo ln -sf /usr/bin/aarch64-linux-gnu-g++ /usr/bin/aarch64-linux-android-g++ || true
         
-        echo "=== Using Clang: $(clang --version | head -n1) ==="
-        echo "=== Python: $(python --version) ==="
+        echo "=== 环境检查 ==="
+        echo "Using Clang: $KBUILD_COMPILER_STRING"
+        echo "Python: $(python --version)"
         
+        # 2. 【核心修复】源码补丁 (解决 Clang 12 报错)
+        echo "=== Applying Clang Compatibility Patches ==="
+        
+        # 修复 error: register 'sp' unsuitable for global register variables
+        # 将全局 sp 寄存器变量声明改为内联函数获取，规避 Clang 12 限制
+        if [ -f arch/arm64/include/asm/stack_pointer.h ]; then
+            sed -i 's/register unsigned long current_stack_pointer asm ("sp");/static __always_inline unsigned long get_current_sp(void) { unsigned long sp; asm volatile("mov %0, sp" : "=r"(sp)); return sp; }/g' arch/arm64/include/asm/stack_pointer.h
+            sed -i 's/current_stack_pointer/get_current_sp()/g' arch/arm64/include/asm/stack_pointer.h || true
+        fi
+
+        # 修复 error: value '65536' out of range for constraint 'I'
+        # 将立即数约束 "I" 改为寄存器约束 "r"，防止 16 位立即数导致溢出
+        sed -i 's/"I" (1 << TICKET_SHIFT)/"r" (1 << TICKET_SHIFT)/g' arch/arm64/include/asm/spinlock.h
+
+        # 3. 配置内核
         make O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
         
-        # Stack Protector 修复
-        echo "=== Disabling ALL Stack Protector ==="
+        # 修复 Stack Protector
+        echo "=== Disabling Stack Protector ==="
         scripts/config --file out/.config -d CC_STACKPROTECTOR_STRONG
         scripts/config --file out/.config -d CC_STACKPROTECTOR_REGULAR
         scripts/config --file out/.config -e CC_STACKPROTECTOR_NONE
         make O=out ARCH=arm64 olddefconfig
         
-        # 预编译 dtc 解决 yylloc duplicate（关键！）
-        echo "=== Pre-building dtc to fix yylloc race ==="
-        make -j2 O=out ARCH=arm64 scripts/dtc/dtc || true
+        # 4. 预编译工具 (解决 DTC 报错)
+        echo "=== Pre-building scripts ==="
+        make -j$(nproc --all) O=out ARCH=arm64 scripts
         
-        # ================ 最终编译命令（Clang12 + 完美参数）================
-        echo "=== Starting build with Clang12 + correct AS ==="
+        # 5. 【最终编译】执行
+        # 注意：设置 LLVM_IAS=0 使用外部汇编器，可大幅减少内联汇编报错
+        echo "=== Starting Kernel Build ==="
         make -j$(nproc --all) O=out ARCH=arm64 \
           CC="ccache clang" \
           HOSTCC="ccache clang" \
+          CLANG_TRIPLE=aarch64-linux-gnu- \
+          CROSS_COMPILE=aarch64-linux-gnu- \
+          CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
           LD=ld.lld \
-          HOSTLD=ld.lld \
           AR=llvm-ar \
           NM=llvm-nm \
           OBJCOPY=llvm-objcopy \
           OBJDUMP=llvm-objdump \
           STRIP=llvm-strip \
-          AS=aarch64-linux-gnu-as \
-          HOSTAS=aarch64-linux-gnu-as \
           LLVM=1 \
-          LLVM_IAS=1
-        # ===================================================================
+          LLVM_IAS=0 \
+          V=0
 
         
     - name: 准备打包内核
