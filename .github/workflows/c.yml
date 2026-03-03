@@ -1,4 +1,4 @@
-name: CCCCCCCCC
+name: 通用 低端机 zyc clang23
 on:
   workflow_dispatch:
 
@@ -140,11 +140,11 @@ jobs:
     - name: 创建编译器包装脚本来解决clang兼容性问题
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
+        
         # 创建包装脚本来使用GNU工具处理特定命令
         cat << 'EOF' > wrapper_clang_as.sh
 #!/bin/bash
 # 包装clang assembler以处理不兼容的参数
-CLANG_BIN="$GITHUB_WORKSPACE/kernel_workspace/clang-zyc/bin/as"
 GNU_AS="/usr/bin/aarch64-linux-gnu-as"
 
 # 检查参数中是否包含不兼容的选项
@@ -168,20 +168,12 @@ EOF
         cat << 'EOF' > wrapper_clang_ld.sh
 #!/bin/bash
 # 包装clang linker以处理重复符号问题
-CLANG_LD="$GITHUB_WORKSPACE/kernel_workspace/clang-zyc/bin/ld"
 GNU_LD="/usr/bin/aarch64-linux-gnu-ld"
 
-# 检查参数中是否包含--allow-multiple-definition
-found_allow_multiple_definition=false
+# 检查参数中是否包含-yylloc参数导致的冲突
 args=()
 for arg in "$@"; do
-  if [[ "$arg" == *"-yylloc"* ]]; then
-    # 跳过引起冲突的参数
-    continue
-  elif [[ "$arg" == "-allow-multiple-definition" || "$arg" == "--allow-multiple-definition" ]]; then
-    found_allow_multiple_definition=true
-    continue
-  else
+  if [[ "$arg" != *"-yylloc"* ]]; then
     args+=("$arg")
   fi
 done
