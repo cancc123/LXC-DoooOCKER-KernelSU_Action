@@ -81,25 +81,28 @@ jobs:
     - name: 开始编译内核
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/clang-r416183b/bin:$PATH
+        
+        # 更可靠的 Clang PATH（防止路径问题）
+        CLANG_DIR=$(find $GITHUB_WORKSPACE/kernel_workspace/clang-aosp -maxdepth 1 -name "clang-r*" | head -n1)
+        export PATH=$CLANG_DIR/bin:$PATH
+        echo "=== Using Clang: $(clang --version | head -n1) ==="
         
         make O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
         
-        # ================ 修复 Stack Protector 错误（关键！）================
-        echo "=== Fixing CONFIG_CC_STACKPROTECTOR_STRONG for Clang ==="
+        # ================ 彻底修复 Stack Protector（关键！）================
+        echo "=== Disabling ALL Stack Protector (Clang12 compatibility) ==="
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
         
-        # 使用内核自带的 scripts/config 工具修改 .config（最干净）
         scripts/config --file out/.config -d CC_STACKPROTECTOR_STRONG
-        scripts/config --file out/.config -e CC_STACKPROTECTOR_REGULAR   # 保留普通保护（推荐）
-        # scripts/config --file out/.config -e CC_STACKPROTECTOR_NONE   # 如果想完全关闭就用这行
+        scripts/config --file out/.config -d CC_STACKPROTECTOR_REGULAR
+        scripts/config --file out/.config -e CC_STACKPROTECTOR_NONE
         
         make O=out ARCH=arm64 olddefconfig   # 重新应用配置
         
-        echo "Stack protector fixed successfully."
+        echo "Stack protector fully disabled (NONE). Ready to build."
         # ===================================================================
         
-        if [ ${{env.LLVM_CONFIG}}=y ]; then
+        if [ "${{ env.LLVM_CONFIG }}" = "y" ]; then
           make -j$(nproc --all) CC="ccache clang" O=out ARCH=arm64 \
             CROSS_COMPILE="aarch64-linux-gnu-" \
             CROSS_COMPILE_ARM32="arm-linux-gnueabi-" \
