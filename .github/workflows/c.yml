@@ -11,15 +11,12 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: 安装Python2
+    - name: 设置Python2为默认python（修复 MediaTek DrvGen.py 错误）
       run: |
-        sudo apt-get update
-        sudo apt-get install -y python2-minimal
-        # 验证Python2安装
-        python2 --version
-        which python2
-        # === 关键修复：强制内核构建使用 Python 2 ===
-        echo "PYTHON=python2" >> $GITHUB_ENV
+        sudo apt-get install -y python-is-python2
+        python --version          # 应该显示 Python 2.7.x
+        which python
+        echo "Python2 已成功设为默认 python"
 
     - name: 环境变量配置
       run: |
