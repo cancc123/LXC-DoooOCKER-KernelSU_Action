@@ -87,119 +87,137 @@ jobs:
 
 
     - name: 开始编译内核
-      run: ${{ env.BUILD_SCRIPT }}
-      env:
-        BUILD_SCRIPT: |
-          cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-          
-          # 1. 路径与工具链准备
-          CLANG_DIR=$(find $GITHUB_WORKSPACE/kernel_workspace/clang-aosp -maxdepth 1 -name "clang-r*" | head -n1)
-          export PATH=$CLANG_DIR/bin:$PATH
-          
-          # 补全交叉工具链软链接
-          for tool in gcc g++ ld objcopy objdump nm strip ar as ranlib; do
-            sudo ln -sf /usr/bin/aarch64-linux-gnu-$tool /usr/bin/aarch64-linux-android-$tool || true
-            sudo ln -sf /usr/bin/arm-linux-gnueabi-$tool /usr/bin/arm-linux-android-eabi-$tool || true
-          done
-          
-          # 【关键修复】将编译器选项提前导出
-          export CC="ccache clang"
-          export HOSTCC="ccache clang"
-          export HOSTCXX="ccache clang++"
-          export HOSTCFLAGS="-I$PWD/out/include"
-          export HOSTCXXFLAGS="-I$PWD/out/include"
-          export CLANG_TRIPLE=aarch64-linux-gnu-
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
-          export LD=ld.lld
-          export AR=llvm-ar
-          export NM=llvm-nm
-          export OBJCOPY=llvm-objcopy
-          export OBJDUMP=llvm-objdump
-          export STRIP=llvm-strip
-          export LLVM=1
-          export LLVM_IAS=1 
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        
+        # 1. 路径与工具链准备
+        CLANG_DIR=$(find $GITHUB_WORKSPACE/kernel_workspace/clang-aosp -maxdepth 1 -name "clang-r*" | head -n1)
+        export PATH=$CLANG_DIR/bin:$PATH
+        
+        # 补全交叉工具链软链接
+        for tool in gcc g++ ld objcopy objdump nm strip ar as ranlib; do
+          sudo ln -sf /usr/bin/aarch64-linux-gnu-$tool /usr/bin/aarch64-linux-android-$tool || true
+          sudo ln -sf /usr/bin/arm-linux-gnueabi-$tool /usr/bin/arm-linux-android-eabi-$tool || true
+        done
+        
+        # 【关键修复】将编译器选项提前导出
+        export CC="ccache clang"
+        export HOSTCC="ccache clang"
+        export HOSTCXX="ccache clang++"
+        # 【新增】强制指定 generated 头文件路径 (针对 HOST 工具)
+        export HOSTCFLAGS="-I$PWD/out/include"
+        export HOSTCXXFLAGS="-I$PWD/out/include"
+        export CLANG_TRIPLE=aarch64-linux-gnu-
+        export CROSS_COMPILE=aarch64-linux-gnu-
+        export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+        export LD=ld.lld
+        export AR=llvm-ar
+        export NM=llvm-nm
+        export OBJCOPY=llvm-objcopy
+        export OBJDUMP=llvm-objdump
+        export STRIP=llvm-strip
+        export LLVM=1
+        export LLVM_IAS=1 
+        
+        echo "=== 环境检查 ==="
+        echo "Clang: $(clang --version | head -n1)"
+        echo "Python: $(python --version)"
+        echo "CC: $CC"
     
-          echo "=== 环境检查 ==="
-          echo "Clang: $(clang --version | head -n1)"
-          echo "Python: $(python --version)"
-          echo "CC: $CC"
-    
-          # 2. 内核配置
-          make O=out ARCH=arm64 cezanne_user_defconfig
+        # 2. 内核配置
+        make O=out ARCH=arm64 cezanne_user_defconfig
+        
+        # 【修复】DTC 补丁
+        echo "=== Patching DTC for yylloc ==="
+        if [ -f scripts/dtc/dtc-lexer.l ]; then
+          sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/g' scripts/dtc/dtc-lexer.l
+        fi
+        if [ -f scripts/dtc/dtc-lexer.lex.c ]; then
+          sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/g' scripts/dtc/dtc-lexer.lex.c
+        fi
+        if [ -f scripts/dtc/dtc-lexer.lex.c_shipped ]; then
+          sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/g' scripts/dtc/dtc-lexer.lex.c_shipped
+        fi
+        
+        echo "=== Disabling Stack Protector ==="
+        scripts/config --file out/.config -d CC_STACKPROTECTOR_STRONG
+        scripts/config --file out/.config -d CC_STACKPROTECTOR_REGULAR
+        scripts/config --file out/.config -e CC_STACKPROTECTOR_NONE
+        make O=out ARCH=arm64 olddefconfig
+        
+        # 3. Clang 兼容 patch (核心修复区)
+        echo "=== Applying Clang Compatibility Patches ==="
+        
+        # 修复 1: stack_pointer.h - 重写文件
+        if [ -f arch/arm64/include/asm/stack_pointer.h ]; then
+          echo "Patching stack_pointer.h..."
+          # 清理旧内容
+          sed -i '/register unsigned long current_stack_pointer/d' arch/arm64/include/asm/stack_pointer.h
+          sed -i '/static.*get_current_sp/d' arch/arm64/include/asm/stack_pointer.h
           
-          # 【修复】DTC 补丁
-          echo "=== Patching DTC for yylloc ==="
-          if [ -f scripts/dtc/dtc-lexer.l ]; then
-            sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/g' scripts/dtc/dtc-lexer.l
-          fi
-          if [ -f scripts/dtc/dtc-lexer.lex.c ]; then
-            sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/g' scripts/dtc/dtc-lexer.lex.c
-          fi
-          if [ -f scripts/dtc/dtc-lexer.lex.c_shipped ]; then
-            sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/g' scripts/dtc/dtc-lexer.lex.c_shipped
-          fi
-    
-          echo "=== Disabling Stack Protector ==="
-          scripts/config --file out/.config -d CC_STACKPROTECTOR_STRONG
-          scripts/config --file out/.config -d CC_STACKPROTECTOR_REGULAR
-          scripts/config --file out/.config -e CC_STACKPROTECTOR_NONE
-          make O=out ARCH=arm64 olddefconfig
-    
-          # 3. Clang 兼容 patch
-          echo "=== Applying Clang Compatibility Patches ==="
-          
-          # 修复 stack_pointer.h：重写文件
-          if [ -f arch/arm64/include/asm/stack_pointer.h ]; then
-            echo "Patching stack_pointer.h..."
+          # 写入新内容
+          cat > arch/arm64/include/asm/stack_pointer.h << 'EOF'
+        #ifndef __ASM_STACK_POINTER_H
+        #define __ASM_STACK_POINTER_H
+        
+        #include <asm/asm-offsets.h>
+        
+        static __always_inline unsigned long get_current_sp(void)
+        {
+        unsigned long sp;
+        asm volatile("mov %0, sp" : "=r"(sp));
+        return sp;
+        }
+        
+        #endif /* __ASM_STACK_POINTER_H */
+        EOF
+              echo "stack_pointer.h replaced successfully."
+            fi
             
-            # 清理旧内容
-            sed -i '/register unsigned long current_stack_pointer/d' arch/arm64/include/asm/stack_pointer.h
-            sed -i '/static.*get_current_sp/d' arch/arm64/include/asm/stack_pointer.h
+            # 修复 2: asm-offsets.h - 修正 include 路径
+            # 这是解决 "generated/asm-offsets.h: No such file" 的关键
+            if [ -f arch/arm64/include/asm/asm-offsets.h ]; then
+              echo "Fixing asm-offsets.h include path..."
+              sed -i 's/#include <generated\/asm-offsets.h>/#include "..\/generated\/asm-offsets.h"/g' arch/arm64/include/asm/asm-offsets.h
+            fi
             
-            # 写入新内容 (注意：这里在 ENV 中，缩进不重要，Shell 会自动处理)
-            cat > arch/arm64/include/asm/stack_pointer.h << 'EOF'
-          #ifndef __ASM_STACK_POINTER_H
-          #define __ASM_STACK_POINTER_H
-    
-          #include <asm/asm-offsets.h>
-    
-          static __always_inline unsigned long get_current_sp(void)
-          {
-          unsigned long sp;
-          asm volatile("mov %0, sp" : "=r"(sp));
-          return sp;
-          }
-    
-          #endif /* __ASM_STACK_POINTER_H */
-          EOF
-            echo "stack_pointer.h replaced successfully."
-          fi
-          
-          # 全局替换引用
-          find . -type f -name "*.h" -o -name "*.c" | xargs sed -i 's/current_stack_pointer/get_current_sp()/g' || true
-          
-          # 修复 spinlock.h
-          if [ -f arch/arm64/include/asm/spinlock.h ]; then
-            sed -i 's/"I" (1 << TICKET_SHIFT)/"r" (1 << TICKET_SHIFT)/g' arch/arm64/include/asm/spinlock.h
-          fi
-    
-          # 4. Pre-build scripts
-          echo "=== Pre-building scripts ==="
-          make O=out ARCH=arm64 scripts
-    
-          # 5. 最终编译
-          echo "=== Starting Kernel Build ==="
-          make -j$(nproc --all) O=out ARCH=arm64 LLVM=1 LLVM_IAS=1
-          
-          # 检查输出
-          if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
-            echo "Kernel built successfully"
-            exit 0
-          else
-            echo "Build failed"
-            exit 1
-          fi
+            # 全局替换引用
+            find . -type f -name "*.h" -o -name "*.c" | xargs sed -i 's/current_stack_pointer/get_current_sp()/g' || true
+            
+            # 修复 spinlock.h
+            if [ -f arch/arm64/include/asm/spinlock.h ]; then
+              sed -i 's/"I" (1 << TICKET_SHIFT)/"r" (1 << TICKET_SHIFT)/g' arch/arm64/include/asm/spinlock.h
+            fi
+        
+            # 4. Pre-build scripts
+            echo "=== Pre-building scripts ==="
+            make O=out ARCH=arm64 scripts
+        
+            # 5. 最终编译
+            echo "=== Starting Kernel Build ==="
+            make -j$(nproc --all) O=out ARCH=arm64 LLVM=1 LLVM_IAS=1
+            
+            # 检查输出
+            if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
+              echo "Kernel built successfully"
+              exit 0
+            else
+              echo "Build failed"
+              exit 1
+            fi
+          shell: /usr/bin/bash -e {0}
+          env:
+            KERNEL_SOURCE: https://github.com/MiCode/Xiaomi_Kernel_OpenSource
+            KERNEL_SOURCE_BRANCH: cezanne-q-oss
+            KERNEL_CONFIG: cezanne_user_defconfig
+            KERNEL_ZIP_NAME: vince_lxc-docker-kernel-4.19_202602190400
+            LLVM_CONFIG: y
+            ENABLE_KERNELSU: false
+            KERNELSU_TAG: main
+            ENABLE_KVM: false
+            ENABLE_LXC_DOCKER: true
+
+
 
               
     - name: 准备打包内核
