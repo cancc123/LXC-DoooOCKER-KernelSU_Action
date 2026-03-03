@@ -82,11 +82,32 @@ jobs:
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
         export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/clang-r416183b/bin:$PATH
+        
         make O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
+        
+        # ================ 修复 Stack Protector 错误（关键！）================
+        echo "=== Fixing CONFIG_CC_STACKPROTECTOR_STRONG for Clang ==="
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        
+        # 使用内核自带的 scripts/config 工具修改 .config（最干净）
+        scripts/config --file out/.config -d CC_STACKPROTECTOR_STRONG
+        scripts/config --file out/.config -e CC_STACKPROTECTOR_REGULAR   # 保留普通保护（推荐）
+        # scripts/config --file out/.config -e CC_STACKPROTECTOR_NONE   # 如果想完全关闭就用这行
+        
+        make O=out ARCH=arm64 olddefconfig   # 重新应用配置
+        
+        echo "Stack protector fixed successfully."
+        # ===================================================================
+        
         if [ ${{env.LLVM_CONFIG}}=y ]; then
-        make -j$(nproc --all) CC="ccache clang" O=out ARCH=arm64 CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-" LLVM=1 LLVM_IAS=1
+          make -j$(nproc --all) CC="ccache clang" O=out ARCH=arm64 \
+            CROSS_COMPILE="aarch64-linux-gnu-" \
+            CROSS_COMPILE_ARM32="arm-linux-gnueabi-" \
+            LLVM=1 LLVM_IAS=1
         else
-        make -j$(nproc --all) CC="ccache clang" O=out ARCH=arm64 CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-"
+          make -j$(nproc --all) CC="ccache clang" O=out ARCH=arm64 \
+            CROSS_COMPILE="aarch64-linux-gnu-" \
+            CROSS_COMPILE_ARM32="arm-linux-gnueabi-"
         fi
             
     - name: 准备打包内核
