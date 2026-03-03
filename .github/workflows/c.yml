@@ -83,41 +83,50 @@ jobs:
         key: build-kernel-mido-kernel
         max-size: 2G
 
+
     - name: 开始编译内核
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
         
-        # 更可靠的 Clang PATH（防止路径问题）
+        # 可靠的 Clang PATH
         CLANG_DIR=$(find $GITHUB_WORKSPACE/kernel_workspace/clang-aosp -maxdepth 1 -name "clang-r*" | head -n1)
         export PATH=$CLANG_DIR/bin:$PATH
         echo "=== Using Clang: $(clang --version | head -n1) ==="
+        echo "=== Python check: $(python --version) ==="
         
         make O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
         
-        # ================ 彻底修复 Stack Protector（关键！）================
-        echo "=== Disabling ALL Stack Protector (Clang12 compatibility) ==="
-        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        
+        # ================ Stack Protector 修复（已验证有效）================
+        echo "=== Disabling ALL Stack Protector ==="
         scripts/config --file out/.config -d CC_STACKPROTECTOR_STRONG
         scripts/config --file out/.config -d CC_STACKPROTECTOR_REGULAR
         scripts/config --file out/.config -e CC_STACKPROTECTOR_NONE
-        
-        make O=out ARCH=arm64 olddefconfig   # 重新应用配置
-        
-        echo "Stack protector fully disabled (NONE). Ready to build."
+        make O=out ARCH=arm64 olddefconfig
+        echo "Stack protector fixed."
         # ===================================================================
         
+        # ================ 完整 LLVM 编译（解决 -EL 错误）================
+        echo "=== Starting full LLVM build (with ld.lld) ==="
         if [ "${{ env.LLVM_CONFIG }}" = "y" ]; then
-          make -j$(nproc --all) CC="ccache clang" O=out ARCH=arm64 \
+          make -j$(nproc --all) O=out ARCH=arm64 \
+            CC="ccache clang" \
+            LD=ld.lld \
+            AR=llvm-ar \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
             CROSS_COMPILE="aarch64-linux-gnu-" \
             CROSS_COMPILE_ARM32="arm-linux-gnueabi-" \
             LLVM=1 LLVM_IAS=1
         else
-          make -j$(nproc --all) CC="ccache clang" O=out ARCH=arm64 \
+          make -j$(nproc --all) O=out ARCH=arm64 \
+            CC="ccache clang" \
             CROSS_COMPILE="aarch64-linux-gnu-" \
             CROSS_COMPILE_ARM32="arm-linux-gnueabi-"
         fi
-            
+        # ===================================================================
+        
     - name: 准备打包内核
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
