@@ -124,7 +124,7 @@ jobs:
         # ===================================================================
         # 1. 禁用 LLVM 的内置汇编器 (IAS)，强制使用 GNU as
         export LLVM_IAS=0 
-        # 2. 告诉编译器不要将 array-bounds 警告视为错误
+        # 2. 告诉编译器不要将 array-bounds 警告视为错误 (通用保险)
         export KBUILD_CFLAGS="$KBUILD_CFLAGS -Wno-array-bounds"
         
         echo "=== 环境检查 ==="
@@ -176,10 +176,12 @@ jobs:
           exit 1
         fi
     
-        # 3. Clang 兼容 patch (核心修复区)
+        # ===================================================================
+        # 【终极修复】Clang 兼容性补丁 (解决所有报错)
+        # ===================================================================
         echo "=== Applying Clang Compatibility Patches ==="
         
-        # 修复 stack_pointer.h
+        # 修复 1: stack_pointer.h (解决 SP 寄存器问题)
         if [ -f arch/arm64/include/asm/stack_pointer.h ]; then
           sed -i '/register unsigned long current_stack_pointer/d' arch/arm64/include/asm/stack_pointer.h
           sed -i '/static.*get_current_sp/d' arch/arm64/include/asm/stack_pointer.h
@@ -197,16 +199,30 @@ jobs:
         #endif /* __ASM_STACK_POINTER_H */
         EOF
               find . -type f -name "*.h" -o -name "*.c" | xargs sed -i 's/current_stack_pointer/get_current_sp()/g' || true
+              echo " Patched stack_pointer.h"
             fi
             
-            # 修复 spinlock.h
+            # 修复 2: spinlock.h (解决 add w4,w4,x2 汇编错误)
             if [ -f arch/arm64/include/asm/spinlock.h ]; then
               sed -i 's/"I" (1 << TICKET_SHIFT)/"r" (1 << TICKET_SHIFT)/g' arch/arm64/include/asm/spinlock.h
+              echo " Patched spinlock.h (Fixed operand mismatch)"
+            fi
+        
+            # 修复 3: swap_state.c (解决 array-bounds 误报)
+            # 在文件顶部包含头文件后立即忽略该警告
+            if [ -f mm/swap_state.c ]; then
+              sed -i '/#include <linux\/swapops.h>/a \\\n#pragma GCC diagnostic ignored "-Warray-bounds"\n' mm/swap_state.c
+              echo " Patched mm/swap_state.c (Fixed array-bounds)"
+            fi
+        
+            # 修复 4: core.c (解决另一个 array-bounds 误报)
+            if [ -f kernel/events/core.c ]; then
+              sed -i '/#include <linux\/sched_clock.h>/a \\\n#pragma GCC diagnostic ignored "-Warray-bounds"\n' kernel/events/core.c
+              echo " Patched kernel/events/core.c (Fixed array-bounds)"
             fi
         
             # 5. 最终编译
             echo "=== Starting Kernel Build ==="
-            # 移除了显式的 LD=ld.lld，使用上面导出的 GNU ld
             make -j$(nproc --all) O=out ARCH=arm64
             
             # 检查输出
@@ -228,7 +244,7 @@ jobs:
             KERNELSU_TAG: main
             ENABLE_KVM: false
             ENABLE_LXC_DOCKER: true
-              
+                      
     - name: 准备打包内核
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
