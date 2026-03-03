@@ -1,1 +1,143 @@
+name: 通用 低端机 clang12 简化配置 v5
+on:
+  workflow_dispatch:
 
+jobs:
+  build:
+    name: 
+    runs-on: ubuntu-22.04  
+    if: github.event.repository.owner.id == github.event.sender.id
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: 安装Python2
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y python2-minimal
+        # 验证Python2安装
+        python2 --version
+        which python2
+    - name: 修复Mediatek DrvGen.py Python语法问题
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        if [ -f "tools/dct/DrvGen.py" ]; then
+          echo "修复 tools/dct/DrvGen.py 中的Python语法..."
+          # 备份原始文件
+          cp tools/dct/DrvGen.py tools/dct/DrvGen.py.bak
+          
+          # 修改shebang确保使用python2
+          sed -i '1s|.*python.*|#!/usr/bin/env python2|' tools/dct/DrvGen.py
+          
+          # 修复Python 2/3语法差异
+          # 修复print语句
+          sed -i 's/print sys.argv\[0\]/print(sys.argv[0])/g' tools/dct/DrvGen.py
+          sed -i 's/print usage/print(usage)/g' tools/dct/DrvGen.py
+          sed -i 's/print "\[Info\]"/print("[Info]")/g' tools/dct/DrvGen.py
+          sed -i 's/print "\[Error\]"/print("[Error]")/g' tools/dct/DrvGen.py
+          sed -i 's/print "\[Warning\]"/print("[Warning]")/g' tools/dct/DrvGen.py
+          sed -i 's/print "\[Notice\]"/print("[Notice]")/g' tools/dct/DrvGen.py
+          
+          # 修复其他常见语法差异
+          sed -i 's/has_key(/keys().__contains__(/g' tools/dct/DrvGen.py
+          
+          # 验证修复后的文件
+          python2 -m py_compile tools/dct/DrvGen.py
+          if [ $? -eq 0 ]; then
+            echo "Python语法修复成功"
+          else
+            echo "Python语法修复失败"
+            head -30 tools/dct/DrvGen.py
+            exit 1
+          fi
+        else
+          echo "未找到 tools/dct/DrvGen.py 文件，跳过修复"
+        fi
+    
+    - name: 环境变量配置
+      run: |
+        cat config.env | grep KERNEL_SOURCE= >> $GITHUB_ENV
+        cat config.env | grep KERNEL_SOURCE_BRANCH= >> $GITHUB_ENV
+        cat config.env | grep KERNEL_CONFIG= >> $GITHUB_ENV
+        cat config.env | grep KERNEL_ZIP_NAME= >> $GITHUB_ENV
+        cat config.env | grep LLVM_CONFIG= >> $GITHUB_ENV
+        cat config.env | grep ENABLE_KERNELSU= >> $GITHUB_ENV
+        cat config.env | grep KERNELSU_TAG= >> $GITHUB_ENV
+        cat config.env | grep ENABLE_KVM= >> $GITHUB_ENV
+        cat config.env | grep ENABLE_LXC_DOCKER= >> $GITHUB_ENV
+        cat config.env | grep ENABLE_KERNELSU= >> $GITHUB_ENV
+        cat config.env | grep KERNELSU_TAG= >> $GITHUB_ENV
+
+    - name: 构建编译内核环境
+      run: |
+        sudo apt-get update
+        sudo -E apt-get -y -qq install git make bc bison ccache openssl zip kmod cpio flex libelf-dev curl libssl-dev libtfm-dev wget device-tree-compiler ca-certificates python3 binutils binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi
+        sudo -E apt-get -y -qq install build-essential gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi gcc-arm-linux-gnueabihf
+        mkdir -p $GITHUB_WORKSPACE/kernel_workspace
+    
+    - name: 下载谷歌clang12编译器
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace
+        mkdir clang-aosp
+        git clone -q --depth=1 --single-branch https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 -b android12-release clang-aosp
+
+    - name: 下载内核源码
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace
+        git clone ${{ env.KERNEL_SOURCE }} -b ${{ env.KERNEL_SOURCE_BRANCH }} android-kernel --depth=1
+
+    - name: 开启lxc和docker配置
+      if: env.ENABLE_LXC_DOCKER == 'true'
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace
+        wget https://github.com/ego-taboo/LXC-DOCKER-KernelSU_Action/releases/download/2.0.0/add-lxc-docker-custom3.sh
+        chmod 755 add-lxc-docker-custom3.sh
+        ./add-lxc-docker-custom3.sh android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+        echo "# CONFIG_ANDROID_PARANOID_NETWORK is not set" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+
+    - name: 添加runc补丁
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace
+        wget https://github.com/ego-taboo/LXC-DOCKER-KernelSU_Action/releases/download/1.0.0/runcpatch.sh
+        chmod a+x runcpatch.sh
+        if [ -f android-kernel/kernel/cgroup.c ]; then
+        ./runcpatch.sh android-kernel/kernel/cgroup.c               
+        fi
+        if [ -f android-kernel/kernel/cgroup/cgroup.c ]; then
+        ./runcpatch.sh android-kernel/kernel/cgroup/cgroup.c               
+        fi
+
+    - name: 设置ccache缓存
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: build-kernel-mido-kernel
+        max-size: 2G
+
+    - name: 开始编译内核
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/clang-r416183b/bin:$PATH
+        make O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
+        if [ ${{env.LLVM_CONFIG}}=y ]; then
+        make -j$(nproc --all) CC="ccache clang" O=out ARCH=arm64 CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-" LLVM=1 LLVM_IAS=1
+        else
+        make -j$(nproc --all) CC="ccache clang" O=out ARCH=arm64 CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-"
+        fi
+            
+    - name: 准备打包内核
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace
+        git clone https://github.com/osm0sis/AnyKernel3
+        sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
+        sed -i 's!BLOCK=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!BLOCK=/dev/block/bootdevice/by-name/boot;!g' AnyKernel3/anykernel.sh
+        sed -i 's/is_slot_device=1;/is_slot_device=0;/g' AnyKernel3/anykernel.sh
+        cp android-kernel/out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
+        rm -rf AnyKernel3/.git* AnyKernel3/README.md
+        rm -rf AnyKernel3/ramdisk AnyKernel3/modules AnyKernel3/patch
+    
+    
+    - name: 打包并上传
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.KERNEL_ZIP_NAME }}
+        path: kernel_workspace/AnyKernel3/*
