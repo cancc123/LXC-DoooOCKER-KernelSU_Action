@@ -1,4 +1,4 @@
-name: 通用 低端机 vv9
+name: cccccccccccc
 on:
   workflow_dispatch:
 
@@ -18,7 +18,7 @@ jobs:
         # 验证Python2安装
         python2 --version
         which python2
-        
+
     - name: 环境变量配置
       run: |
         cat config.env | grep KERNEL_SOURCE= >> $GITHUB_ENV
@@ -39,7 +39,6 @@ jobs:
         sudo -E apt-get -y -qq install git make bc bison ccache openssl zip kmod cpio flex libelf-dev curl libssl-dev libtfm-dev wget device-tree-compiler ca-certificates python3 binutils binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi
         mkdir -p $GITHUB_WORKSPACE/kernel_workspace
 
-    
     - name: 下载zyc-clang编译器
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
@@ -51,6 +50,42 @@ jobs:
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
         git clone ${{ env.KERNEL_SOURCE }} -b ${{ env.KERNEL_SOURCE_BRANCH }} android-kernel --depth=1
+
+    - name: 修复Mediatek DrvGen.py Python语法问题
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        if [ -f "tools/dct/DrvGen.py" ]; then
+          echo "修复 tools/dct/DrvGen.py 中的Python语法..."
+          # 备份原始文件
+          cp tools/dct/DrvGen.py tools/dct/DrvGen.py.bak
+          
+          # 修改shebang确保使用python2
+          sed -i '1s|.*python.*|#!/usr/bin/env python2|' tools/dct/DrvGen.py
+          
+          # 修复Python 2/3语法差异
+          # 修复print语句
+          sed -i 's/print sys.argv\[0\]/print(sys.argv[0])/g' tools/dct/DrvGen.py
+          sed -i 's/print usage/print(usage)/g' tools/dct/DrvGen.py
+          sed -i 's/print "\[Info\]"/print("[Info]")/g' tools/dct/DrvGen.py
+          sed -i 's/print "\[Error\]"/print("[Error]")/g' tools/dct/DrvGen.py
+          sed -i 's/print "\[Warning\]"/print("[Warning]")/g' tools/dct/DrvGen.py
+          sed -i 's/print "\[Notice\]"/print("[Notice]")/g' tools/dct/DrvGen.py
+          
+          # 修复其他常见语法差异
+          sed -i 's/has_key(/keys().__contains__(/g' tools/dct/DrvGen.py
+          
+          # 验证修复后的文件
+          python2 -m py_compile tools/dct/DrvGen.py
+          if [ $? -eq 0 ]; then
+            echo "Python语法修复成功"
+          else
+            echo "Python语法修复失败"
+            head -30 tools/dct/DrvGen.py
+            exit 1
+          fi
+        else
+          echo "未找到 tools/dct/DrvGen.py 文件，跳过修复"
+        fi
 
     - name: 开启lxc和docker配置
       if: env.ENABLE_LXC_DOCKER == 'true'
@@ -108,8 +143,11 @@ jobs:
         export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-zyc/bin:$PATH
         export KBUILD_BUILD_HOST=17
         export KBUILD_BUILD_USER=HyperPower
+        # 设置Python环境以确保使用Python2运行构建脚本
+        export PYTHON=/usr/bin/python2
+        
         make -s -j$(nproc --all) O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
-        if [ ${{env.LLVM_CONFIG}}=y ]; then
+        if [ "${{ env.LLVM_CONFIG }}" = "y" ]; then
         make -j$(nproc --all) CC="ccache clang" CXX=clang++ O=out ARCH=arm64 CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-" LLVM=1 LLVM_IAS=1
         else
         make -j$(nproc --all) CC="ccache clang" CXX=clang++ O=out ARCH=arm64 CLANG_TRIPLE="aarch64-linux-gnu-" CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-"
@@ -125,7 +163,6 @@ jobs:
         cp android-kernel/out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
         rm -rf AnyKernel3/.git* AnyKernel3/README.md
         rm -rf AnyKernel3/ramdisk AnyKernel3/modules AnyKernel3/patch
-    
     
     - name: 打包并上传
       uses: actions/upload-artifact@v4
