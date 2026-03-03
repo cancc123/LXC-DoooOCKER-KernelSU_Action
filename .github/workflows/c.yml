@@ -88,7 +88,7 @@ jobs:
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
         
-        # Clang PATH
+        # Clang PATH（确保 Clang 在前）
         CLANG_DIR=$(find $GITHUB_WORKSPACE/kernel_workspace/clang-aosp -maxdepth 1 -name "clang-r*" | head -n1)
         export PATH=$CLANG_DIR/bin:$PATH
         echo "=== Using Clang: $(clang --version | head -n1) ==="
@@ -103,23 +103,26 @@ jobs:
         scripts/config --file out/.config -e CC_STACKPROTECTOR_NONE
         make O=out ARCH=arm64 olddefconfig
         
-        # ================ 关键修复：强制正确 AS + HOST 工具链 ================
-        echo "=== Starting LLVM build with correct AS (aarch64-linux-gnu-as) ==="
+        # ================ 最终修复方案（解决所有 assembler 和 dtc 问题）================
+        echo "=== Pre-building dtc to avoid yylloc race ==="
+        make -j2 O=out ARCH=arm64 scripts/dtc/dtc || true   # 低并发预编译 dtc
+        
+        echo "=== Starting LLVM build (IAS=0 + GNU AS + HOSTAS) ==="
         if [ "${{ env.LLVM_CONFIG }}" = "y" ]; then
           make -j$(nproc --all) O=out ARCH=arm64 \
             CC="ccache clang" \
             HOSTCC="ccache clang" \
-            HOSTLD="ld.lld" \
             LD=ld.lld \
+            HOSTLD=ld.lld \
             AR=llvm-ar \
             NM=llvm-nm \
             OBJCOPY=llvm-objcopy \
             OBJDUMP=llvm-objdump \
             STRIP=llvm-strip \
             AS=aarch64-linux-gnu-as \
-            CROSS_COMPILE="aarch64-linux-gnu-" \
-            CROSS_COMPILE_ARM32="arm-linux-gnueabi-" \
-            LLVM=1 LLVM_IAS=1
+            HOSTAS=aarch64-linux-gnu-as \
+            LLVM=1 \
+            LLVM_IAS=0
         else
           make -j$(nproc --all) O=out ARCH=arm64 \
             CC="ccache clang" \
