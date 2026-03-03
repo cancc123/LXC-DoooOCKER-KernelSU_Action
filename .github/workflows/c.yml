@@ -92,7 +92,7 @@ jobs:
         CLANG_DIR=$(find $GITHUB_WORKSPACE/kernel_workspace/clang-aosp -maxdepth 1 -name "clang-r*" | head -n1)
         export PATH=$CLANG_DIR/bin:$PATH
         
-        # 补全所有的交叉编译工具链软链接（解决 objdump 等 not found）
+        # 补全交叉工具链软链接（解决 objdump/as 等 not found）
         for tool in gcc g++ ld objcopy objdump nm strip ar as ranlib; do
           sudo ln -sf /usr/bin/aarch64-linux-gnu-$tool /usr/bin/aarch64-linux-android-$tool || true
           sudo ln -sf /usr/bin/arm-linux-gnueabi-$tool /usr/bin/arm-linux-android-eabi-$tool || true
@@ -102,20 +102,23 @@ jobs:
         echo "Clang: $(clang --version | head -n1)"
         echo "Python: $(python --version)"
         
-        # 2. 解决 yylloc 重定义（DTC patch）
+        # 2. DTC yylloc patch
         echo "=== Patching DTC for yylloc multiple definition ==="
         sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/g' scripts/dtc/dtc-lexer.l || true
-        sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/g' scripts/dtc/dtc-lexer.lex.c || true  # 额外应用到生成文件
+        sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/g' scripts/dtc/dtc-lexer.lex.c || true
         if [ -f scripts/dtc/dtc-lexer.lex.c_shipped ]; then
           sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/g' scripts/dtc/dtc-lexer.lex.c_shipped
         fi
         
-        # 3. Clang 兼容性 patch
+        # 3. Clang 兼容 patch（扩展全局替换 current_stack_pointer）
         echo "=== Applying Clang Compatibility Patches ==="
+        # 替换 stack_pointer.h
         if [ -f arch/arm64/include/asm/stack_pointer.h ]; then
           sed -i 's/register unsigned long current_stack_pointer asm ("sp");/static __always_inline unsigned long get_current_sp(void) { unsigned long sp; asm volatile("mov %0, sp" : "=r"(sp)); return sp; }/g' arch/arm64/include/asm/stack_pointer.h
-          sed -i 's/current_stack_pointer/get_current_sp()/g' arch/arm64/include/asm/stack_pointer.h || true
         fi
+        # 全局替换所有文件中的 current_stack_pointer 为 get_current_sp()
+        find arch/arm64/ include/ -type f -name "*.h" -exec sed -i 's/current_stack_pointer/get_current_sp()/g' {} + || true
+        # spinlock immediate patch
         sed -i 's/"I" (1 << TICKET_SHIFT)/"r" (1 << TICKET_SHIFT)/g' arch/arm64/include/asm/spinlock.h
         
         # 4. 内核配置 + Stack Protector
@@ -126,11 +129,11 @@ jobs:
         scripts/config --file out/.config -e CC_STACKPROTECTOR_NONE
         make O=out ARCH=arm64 olddefconfig
         
-        # 5. 预编译 scripts（用 -fcommon 强制兼容旧全局变量）
+        # 5. pre-build scripts（用 -fcommon + 强制 HOSTAS 解决 -EL）
         echo "=== Pre-building scripts with -fcommon ==="
-        make -j$(nproc --all) O=out ARCH=arm64 HOSTCFLAGS="-O2 -fcommon" HOSTCXXFLAGS="-O2 -fcommon" scripts
+        make -j$(nproc --all) O=out ARCH=arm64 HOSTCFLAGS="-O2 -fcommon" HOSTCXXFLAGS="-O2 -fcommon" HOSTAS="aarch64-linux-gnu-as" scripts
         
-        # 6. 最终编译（LLVM_IAS=0 避免汇编问题）
+        # 6. 最终编译（强制 AS + HOSTAS 解决 -EL in mod/empty.o）
         echo "=== Starting Kernel Build ==="
         make -j$(nproc --all) O=out ARCH=arm64 \
           CC="ccache clang" \
@@ -146,9 +149,11 @@ jobs:
           OBJCOPY=llvm-objcopy \
           OBJDUMP=llvm-objdump \
           STRIP=llvm-strip \
+          AS=aarch64-linux-gnu-as \
+          HOSTAS=aarch64-linux-gnu-as \
           LLVM=1 \
           LLVM_IAS=0
-        # 检查 Image.gz-dtb 是否生成
+        # 检查输出
         ls -l out/arch/arm64/boot/Image.gz-dtb || echo "Image not found"
 
     - name: 准备打包内核
