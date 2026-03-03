@@ -156,57 +156,57 @@ jobs:
         if [ -f arch/arm64/include/asm/stack_pointer.h ]; then
           echo "Patching stack_pointer.h..."
           
-          # 清理旧内容
-          sed -i '/register unsigned long current_stack_pointer/d' arch/arm64/include/asm/stack_pointer.h
-          sed -i '/static.*get_current_sp/d' arch/arm64/include/asm/stack_pointer.h
-          
-          # 写入新内容
-          cat > arch/arm64/include/asm/stack_pointer.h << 'EOF'
-          #ifndef __ASM_STACK_POINTER_H
-          #define __ASM_STACK_POINTER_H
-          
-          #include <asm/asm-offsets.h>
-
-          static __always_inline unsigned long get_current_sp(void)
-          {
-          unsigned long sp;
-          asm volatile("mov %0, sp" : "=r"(sp));
-          return sp;
-          }
-          
-          #endif /* __ASM_STACK_POINTER_H */
-          EOF
-                echo "stack_pointer.h replaced successfully."
-              fi
-              
-              # 全局替换引用
-              find . -type f -name "*.h" -o -name "*.c" | xargs sed -i 's/current_stack_pointer/get_current_sp()/g' || true
-              
-              # 修复 spinlock.h
-              if [ -f arch/arm64/include/asm/spinlock.h ]; then
-                sed -i 's/"I" (1 << TICKET_SHIFT)/"r" (1 << TICKET_SHIFT)/g' arch/arm64/include/asm/spinlock.h
-              fi
-          
-              # 4. Pre-build scripts
-              echo "=== Pre-building scripts ==="
-              # 注意：这里不再加 -j，因为 scripts 阶段如果并行可能导致依赖问题
-              make O=out ARCH=arm64 scripts
-          
-              # 5. 最终编译
-              echo "=== Starting Kernel Build ==="
-              # 这里不再写冗长的参数，因为我们已经 export 了
-              make -j$(nproc --all) O=out ARCH=arm64 \
-                LLVM=1 \
-                LLVM_IAS=1
-              
-              # 检查输出
-              if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
-                echo "Kernel built successfully"
-                exit 0
-              else
-                echo "Build failed"
-                exit 1
-              fi
+        # 清理旧内容
+        sed -i '/register unsigned long current_stack_pointer/d' arch/arm64/include/asm/stack_pointer.h
+        sed -i '/static.*get_current_sp/d' arch/arm64/include/asm/stack_pointer.h
+        
+        # 写入新内容
+        cat > arch/arm64/include/asm/stack_pointer.h << 'EOF'
+        #ifndef __ASM_STACK_POINTER_H
+        #define __ASM_STACK_POINTER_H
+        
+        #include <asm/asm-offsets.h>
+        
+        static __always_inline unsigned long get_current_sp(void)
+        {
+        unsigned long sp;
+        asm volatile("mov %0, sp" : "=r"(sp));
+        return sp;
+        }
+        
+        #endif /* __ASM_STACK_POINTER_H */
+        EOF
+        echo "stack_pointer.h replaced successfully."
+        fi
+        
+        # 全局替换引用
+        find . -type f -name "*.h" -o -name "*.c" | xargs sed -i 's/current_stack_pointer/get_current_sp()/g' || true
+        
+        # 修复 spinlock.h
+        if [ -f arch/arm64/include/asm/spinlock.h ]; then
+        sed -i 's/"I" (1 << TICKET_SHIFT)/"r" (1 << TICKET_SHIFT)/g' arch/arm64/include/asm/spinlock.h
+        fi
+        
+        # 4. Pre-build scripts
+        echo "=== Pre-building scripts ==="
+        # 注意：这里不再加 -j，因为 scripts 阶段如果并行可能导致依赖问题
+        make O=out ARCH=arm64 scripts
+        
+        # 5. 最终编译
+        echo "=== Starting Kernel Build ==="
+        # 这里不再写冗长的参数，因为我们已经 export 了
+        make -j$(nproc --all) O=out ARCH=arm64 \
+        LLVM=1 \
+        LLVM_IAS=1
+        
+        # 检查输出
+        if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
+        echo "Kernel built successfully"
+        exit 0
+        else
+        echo "Build failed"
+        exit 1
+        fi
 
 
               
