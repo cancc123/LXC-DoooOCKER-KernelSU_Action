@@ -11,12 +11,6 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: 设置Python2为默认python（修复 MediaTek DrvGen.py 错误）
-      run: |
-        sudo apt-get install -y python-is-python2
-        python --version          # 应该显示 Python 2.7.x
-        which python
-        echo "Python2 已成功设为默认 python"
 
     - name: 环境变量配置
       run: |
@@ -47,6 +41,15 @@ jobs:
         git clone -q --depth=1 --single-branch \
           https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 \
           -b android14-release clang-aosp
+          
+    - name: 安装Python2 并设置为默认
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y python2-minimal
+        sudo ln -sf /usr/bin/python2 /usr/bin/python
+        python --version
+        echo "Python2 设置完成 ✅"
+
 
     - name: 下载内核源码
       run: |
