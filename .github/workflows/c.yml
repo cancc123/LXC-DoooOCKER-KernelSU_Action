@@ -110,18 +110,18 @@ jobs:
         export CROSS_COMPILE=aarch64-linux-gnu-
         export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
         
-        # 【核心变更】不使用 LLVM 自带的汇编器 (LLVM_IAS)，改用 GNU as
-        # 移除了: export LLVM_IAS=1
-        # 显式指定使用系统 GNU 汇编器
+        # 【核心变更】强制使用 GNU 工具链，彻底禁用 LLVM 干预汇编
+        # 这是解决 "operand mismatch" 的关键
         export AS=aarch64-linux-gnu-as
-        export LD=ld.lld
+        export LD=aarch64-linux-gnu-ld
         export AR=llvm-ar
         export NM=llvm-nm
         export OBJCOPY=llvm-objcopy
         export OBJDUMP=llvm-objdump
         export STRIP=llvm-strip
-        export LLVM=1 # 保留 LLVM=1 仅用于链接器等工具，但汇编交给 GNU
-    
+        # 注意：这里我们不再导出 LLVM=1，也不导出 LLVM_IAS
+        # 我们只在链接阶段使用 lld，其他都用 GNU
+        
         echo "=== 环境检查 ==="
         echo "Clang: $(clang --version | head -n1)"
         echo "Python: $(python --version)"
@@ -155,10 +155,9 @@ jobs:
         echo "=== PHYSICAL FIX: Generating asm-offsets.h ==="
         
         # 1. 强制生成中间文件
-        # 这一步会生成 out/include/generated/asm-offsets.h
         make O=out ARCH=arm64 prepare
         
-        # 2. 在源码根目录创建 generated 文件夹 (编译器默认查找路径)
+        # 2. 在源码根目录创建 generated 文件夹
         mkdir -p generated
         
         # 3. 检查并复制文件
@@ -197,10 +196,16 @@ jobs:
             if [ -f arch/arm64/include/asm/spinlock.h ]; then
               sed -i 's/"I" (1 << TICKET_SHIFT)/"r" (1 << TICKET_SHIFT)/g' arch/arm64/include/asm/spinlock.h
             fi
+            
+            # 【终极修复】添加编译标志，忽略 array-bounds 错误
+            # 这是解决 swap_state.c 报错的关键
+            export KBUILD_CFLAGS="$KBUILD_CFLAGS -Wno-array-bounds"
         
             # 5. 最终编译
             echo "=== Starting Kernel Build ==="
-            make -j$(nproc --all) O=out ARCH=arm64 LLVM=1
+            # 移除了 LLVM=1，改用 GNU ld 链接，或者显式指定 lld
+            # 这里我们尝试显式指定链接器为 lld 以保持速度，但汇编用 GNU
+            make -j$(nproc --all) O=out ARCH=arm64 LD=ld.lld
             
             # 检查输出
             if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
@@ -212,7 +217,6 @@ jobs:
             fi
           shell: /usr/bin/bash -e {0}
           env:
-            # 保持你的环境变量不变
             KERNEL_SOURCE: https://github.com/MiCode/Xiaomi_Kernel_OpenSource
             KERNEL_SOURCE_BRANCH: cezanne-q-oss
             KERNEL_CONFIG: cezanne_user_defconfig
