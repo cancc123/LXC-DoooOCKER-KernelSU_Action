@@ -18,6 +18,8 @@ jobs:
         # 验证Python2安装
         python2 --version
         which python2
+        # === 关键修复：强制内核构建使用 Python 2 ===
+        echo "PYTHON=python2" >> $GITHUB_ENV
 
     - name: 环境变量配置
       run: |
