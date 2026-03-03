@@ -92,50 +92,51 @@ jobs:
         CLANG_DIR=$(find $GITHUB_WORKSPACE/kernel_workspace/clang-aosp -maxdepth 1 -name "clang-r*" | head -n1)
         export PATH=$CLANG_DIR/bin:$PATH
         
-        # 补全所有的交叉编译工具链软链接
-        # 解决 aarch64-linux-android-objdump: not found 等问题
-        for tool in gcc g++ ld objcopy objdump nm strip ar; do
-            sudo ln -sf /usr/bin/aarch64-linux-gnu-$tool /usr/bin/aarch64-linux-android-$tool || true
+        # 补全所有的交叉编译工具链软链接（解决 objdump 等 not found）
+        for tool in gcc g++ ld objcopy objdump nm strip ar as ranlib; do
+          sudo ln -sf /usr/bin/aarch64-linux-gnu-$tool /usr/bin/aarch64-linux-android-$tool || true
+          sudo ln -sf /usr/bin/arm-linux-gnueabi-$tool /usr/bin/arm-linux-android-eabi-$tool || true
         done
         
         echo "=== 环境检查 ==="
         echo "Clang: $(clang --version | head -n1)"
+        echo "Python: $(python --version)"
         
-        # 2. 【深度修复】解决 yylloc 重定义报错 (针对 DTC)
+        # 2. 解决 yylloc 重定义（DTC patch）
         echo "=== Patching DTC for yylloc multiple definition ==="
-        # 修正源码中的声明
         sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/g' scripts/dtc/dtc-lexer.l || true
-        # 同时也修正可能已经生成的 shippied 文件，确保万无一失
+        sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/g' scripts/dtc/dtc-lexer.lex.c || true  # 额外应用到生成文件
         if [ -f scripts/dtc/dtc-lexer.lex.c_shipped ]; then
-            sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/g' scripts/dtc/dtc-lexer.lex.c_shipped
+          sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/g' scripts/dtc/dtc-lexer.lex.c_shipped
         fi
-
-        # 3. 【核心修复】源码补丁 (解决 Clang 12 寄存器报错)
-        echo "=== Applying Clang 12 Compatibility Patches ==="
+        
+        # 3. Clang 兼容性 patch
+        echo "=== Applying Clang Compatibility Patches ==="
         if [ -f arch/arm64/include/asm/stack_pointer.h ]; then
-            sed -i 's/register unsigned long current_stack_pointer asm ("sp");/static __always_inline unsigned long get_current_sp(void) { unsigned long sp; asm volatile("mov %0, sp" : "=r"(sp)); return sp; }/g' arch/arm64/include/asm/stack_pointer.h
-            sed -i 's/current_stack_pointer/get_current_sp()/g' arch/arm64/include/asm/stack_pointer.h || true
+          sed -i 's/register unsigned long current_stack_pointer asm ("sp");/static __always_inline unsigned long get_current_sp(void) { unsigned long sp; asm volatile("mov %0, sp" : "=r"(sp)); return sp; }/g' arch/arm64/include/asm/stack_pointer.h
+          sed -i 's/current_stack_pointer/get_current_sp()/g' arch/arm64/include/asm/stack_pointer.h || true
         fi
         sed -i 's/"I" (1 << TICKET_SHIFT)/"r" (1 << TICKET_SHIFT)/g' arch/arm64/include/asm/spinlock.h
-
-        # 4. 内核配置与 Stack Protector 修复
-        make O=out ARCH=arm64 cezanne_user_defconfig
+        
+        # 4. 内核配置 + Stack Protector
+        make O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
+        echo "=== Disabling Stack Protector ==="
         scripts/config --file out/.config -d CC_STACKPROTECTOR_STRONG
         scripts/config --file out/.config -d CC_STACKPROTECTOR_REGULAR
         scripts/config --file out/.config -e CC_STACKPROTECTOR_NONE
         make O=out ARCH=arm64 olddefconfig
-
-        # 5. 【关键】注入 HOSTCFLAGS 绕过 DTC 检查并预编译 scripts
-        # 使用 -fcommon 彻底解决 yylloc 问题
-        echo "=== Pre-building scripts with -fcommon ==="
-        make -j$(nproc --all) O=out ARCH=arm64 HOSTCFLAGS="-O2 -fcommon" scripts
         
-        # 6. 【最终编译】
-        echo "=== Starting Build ==="
+        # 5. 预编译 scripts（用 -fcommon 强制兼容旧全局变量）
+        echo "=== Pre-building scripts with -fcommon ==="
+        make -j$(nproc --all) O=out ARCH=arm64 HOSTCFLAGS="-O2 -fcommon" HOSTCXXFLAGS="-O2 -fcommon" scripts
+        
+        # 6. 最终编译（LLVM_IAS=0 避免汇编问题）
+        echo "=== Starting Kernel Build ==="
         make -j$(nproc --all) O=out ARCH=arm64 \
           CC="ccache clang" \
           HOSTCC="ccache clang" \
           HOSTCFLAGS="-O2 -fcommon" \
+          HOSTCXXFLAGS="-O2 -fcommon" \
           CLANG_TRIPLE=aarch64-linux-gnu- \
           CROSS_COMPILE=aarch64-linux-gnu- \
           CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
@@ -147,7 +148,9 @@ jobs:
           STRIP=llvm-strip \
           LLVM=1 \
           LLVM_IAS=0
-        
+        # 检查 Image.gz-dtb 是否生成
+        ls -l out/arch/arm64/boot/Image.gz-dtb || echo "Image not found"
+
     - name: 准备打包内核
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
@@ -156,12 +159,17 @@ jobs:
         sed -i 's!BLOCK=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!BLOCK=/dev/block/bootdevice/by-name/boot;!g' AnyKernel3/anykernel.sh
         sed -i 's/is_slot_device=1;/is_slot_device=0;/g' AnyKernel3/anykernel.sh
         cp android-kernel/out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
-        rm -rf AnyKernel3/.git* AnyKernel3/README.md
-        rm -rf AnyKernel3/ramdisk AnyKernel3/modules AnyKernel3/patch
-    
-    
+        rm -rf AnyKernel3/.git* AnyKernel3/README.md AnyKernel3/ramdisk AnyKernel3/modules AnyKernel3/patch
+
     - name: 打包并上传
-      uses: actions/upload-artifact@v4
-      with:
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace/AnyKernel3
+        ZIP_NAME="${{ env.KERNEL_ZIP_NAME }}_$(date +%Y%m%d%H%M).zip"
+        zip -r $ZIP_NAME .
+        mkdir -p $GITHUB_WORKSPACE/artifacts
+        mv $ZIP_NAME $GITHUB_WORKSPACE/artifacts/
+
+        uses: actions/upload-artifact@v4
+        with:
         name: ${{ env.KERNEL_ZIP_NAME }}
-        path: kernel_workspace/AnyKernel3/*
+        path: $GITHUB_WORKSPACE/artifacts/*
