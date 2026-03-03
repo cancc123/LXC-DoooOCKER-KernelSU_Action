@@ -11,24 +11,15 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     
-    - name: 修复Python 2/3兼容性问题 - 使用Python2
+    - name: 安装Python2
       run: |
-        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        # 检查是否存在需要修复的Python脚本
-        if [ -f "tools/dct/DrvGen.py" ]; then
-          echo "发现DrvGen.py文件，确认使用Python2运行"
-          # 修改Shebang行或确保脚本能用Python2运行
-          sed -i '1s|^.*python.*$|#!/usr/bin/env python2|' tools/dct/DrvGen.py || echo "无法修改shebang，将使用python2命令运行"
-        fi
-        
-        # 确保系统中安装了Python2
-        if command -v python2 &> /dev/null; then
-          echo "Python2已安装"
-        else
-          echo "安装Python2"
-          sudo apt-get install -y python2
-        fi
-
+        sudo apt-get update
+        sudo apt-get install -y python2-minimal python-is-python2
+        # 验证Python2安装
+        python2 --version
+        python --version
+        which python
+        which python2
         
     - name: 环境变量配置
       run: |
