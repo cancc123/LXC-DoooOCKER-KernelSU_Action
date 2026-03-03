@@ -40,11 +40,14 @@ jobs:
         sudo -E apt-get -y -qq install build-essential gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi gcc-arm-linux-gnueabihf
         mkdir -p $GITHUB_WORKSPACE/kernel_workspace
     
-    - name: 下载谷歌clang12编译器
+    - name: 下载谷歌clang编译器（推荐 android14）
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
-        mkdir clang-aosp
-        git clone -q --depth=1 --single-branch https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 -b android12-release clang-aosp
+        rm -rf clang-aosp
+        mkdir -p clang-aosp
+        git clone -q --depth=1 --single-branch \
+          https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 \
+          -b android14-release clang-aosp
 
     - name: 下载内核源码
       run: |
