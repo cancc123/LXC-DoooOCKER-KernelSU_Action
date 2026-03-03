@@ -1,4 +1,4 @@
-name: 通用 低端机 zyc clang23 简化配置
+name: 通用 低端机 vv9
 on:
   workflow_dispatch:
 
