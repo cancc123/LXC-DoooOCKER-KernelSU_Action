@@ -104,9 +104,10 @@ jobs:
         export CC="ccache clang"
         export HOSTCC="ccache clang"
         export HOSTCXX="ccache clang++"
-        # 【新增】强制指定 generated 头文件路径 (针对 HOST 工具)
-        export HOSTCFLAGS="-I$PWD/out/include"
-        export HOSTCXXFLAGS="-I$PWD/out/include"
+        # 【核心修复】这里不再修改 asm-offsets.h 文件，而是通过 -I 参数告诉编译器去哪找文件
+        # 注意：这里我们保留 HOSTCFLAGS 是为了主机工具，但重点在于下面的 KCFLAGS
+        export HOSTCFLAGS="-I$PWD/include"
+        export HOSTCXXFLAGS="-I$PWD/include"
         export CLANG_TRIPLE=aarch64-linux-gnu-
         export CROSS_COMPILE=aarch64-linux-gnu-
         export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
@@ -119,6 +120,10 @@ jobs:
         export LLVM=1
         export LLVM_IAS=1 
         
+        # 【新增】强制为目标编译添加头文件搜索路径
+        # 这会让编译器在找不到文件时，去 $PWD/include 目录下找（那里有 generated 目录）
+        export KCFLAGS="-I$PWD/include"
+    
         echo "=== 环境检查 ==="
         echo "Clang: $(clang --version | head -n1)"
         echo "Python: $(python --version)"
@@ -156,6 +161,7 @@ jobs:
           sed -i '/static.*get_current_sp/d' arch/arm64/include/asm/stack_pointer.h
           
           # 写入新内容
+          # 注意：这里我们恢复了原始的 #include <asm/asm-offsets.h>，不再包含 generated
           cat > arch/arm64/include/asm/stack_pointer.h << 'EOF'
         #ifndef __ASM_STACK_POINTER_H
         #define __ASM_STACK_POINTER_H
@@ -174,12 +180,9 @@ jobs:
               echo "stack_pointer.h replaced successfully."
             fi
             
-            # 修复 2: asm-offsets.h - 修正 include 路径
-            # 这是解决 "generated/asm-offsets.h: No such file" 的关键
-            if [ -f arch/arm64/include/asm/asm-offsets.h ]; then
-              echo "Fixing asm-offsets.h include path..."
-              sed -i 's/#include <generated\/asm-offsets.h>/#include "..\/generated\/asm-offsets.h"/g' arch/arm64/include/asm/asm-offsets.h
-            fi
+            # 【关键回退】不再修改 asm-offsets.h 的 include 路径
+            # 让它保持原样：#include <generated/asm-offsets.h>
+            # 我们通过上面的 export KCFLAGS="-I$PWD/include" 来解决找不到的问题
             
             # 全局替换引用
             find . -type f -name "*.h" -o -name "*.c" | xargs sed -i 's/current_stack_pointer/get_current_sp()/g' || true
@@ -195,7 +198,8 @@ jobs:
         
             # 5. 最终编译
             echo "=== Starting Kernel Build ==="
-            make -j$(nproc --all) O=out ARCH=arm64 LLVM=1 LLVM_IAS=1
+            # 注意：这里显式传递了 KCFLAGS，确保编译器能找到 include/generated
+            make -j$(nproc --all) O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 KCFLAGS="-I$PWD/include"
             
             # 检查输出
             if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
@@ -216,7 +220,6 @@ jobs:
             KERNELSU_TAG: main
             ENABLE_KVM: false
             ENABLE_LXC_DOCKER: true
-
 
 
               
