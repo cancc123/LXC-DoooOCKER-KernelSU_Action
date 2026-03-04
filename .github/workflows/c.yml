@@ -85,7 +85,7 @@ jobs:
         key: build-kernel-mido-kernel
         max-size: 2G
 
-    
+        
     - name: 开始编译内核
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
@@ -129,6 +129,8 @@ jobs:
         
         echo "=== 环境检查 ==="
         echo "Clang: $(clang --version | head -n1)"
+        # 修复 Python 警告（强制脚本使用 python3，因为 python2 已经停止支持）
+        alias python=python3
         echo "Python: $(python --version)"
         echo "CC: $CC"
         echo "AS: $AS"
@@ -187,77 +189,72 @@ jobs:
         if [ -f arch/arm64/include/asm/stack_pointer.h ]; then
           sed -i '/register unsigned long current_stack_pointer/d' arch/arm64/include/asm/stack_pointer.h
           sed -i '/static.*get_current_sp/d' arch/arm64/include/asm/stack_pointer.h
+          # 关键修复：EOF 必须顶格，不能有缩进！
           cat > arch/arm64/include/asm/stack_pointer.h << 'EOF'
-          #ifndef __ASM_STACK_POINTER_H
-          #define __ASM_STACK_POINTER_H
-          
-          static __always_inline unsigned long get_current_sp(void)
-          {
-          unsigned long sp;
-          asm volatile("mov %0, sp" : "=r"(sp));
-          return sp;
-          }
-          
-          #endif /* __ASM_STACK_POINTER_H */
-          EOF
-                find . -type f -name "*.h" -o -name "*.c" | xargs sed -i 's/current_stack_pointer/get_current_sp()/g' || true
-                echo " Patched stack_pointer.h"
-              fi
-              
-              # -------------------------------------------------------------------
-              # 修复 2: spinlock.h (解决 add w4,w4,x2 汇编错误)
-              # -------------------------------------------------------------------
-              # 这个修复非常重要，必须确保执行
-              if [ -f arch/arm64/include/asm/spinlock.h ]; then
-                # 使用 sed 直接替换导致错误的约束符
-                sed -i 's/"I" (1 << TICKET_SHIFT)/"r" (1 << TICKET_SHIFT)/g' arch/arm64/include/asm/spinlock.h
-                echo " Patched spinlock.h (Fixed operand mismatch)"
-              fi
-          
-              # -------------------------------------------------------------------
-              # 修复 3: swap_state.c (解决语法错误和 array-bounds)
-              # -------------------------------------------------------------------
-              # 旧的 sed 语法有转义问题，改用直接插入方式
-              if [ -f mm/swap_state.c ]; then
-                # 方法：在文件开头插入，避免转义混乱
-                sed -i '1i // Fixed Clang Error\n#pragma GCC diagnostic ignored "-Warray-bounds"\n' mm/swap_state.c
-                echo " Patched mm/swap_state.c (Syntax & Array Bounds)"
-              fi
-          
-              # -------------------------------------------------------------------
-              # 修复 4: pagemap.h (解决 implicit declaration)
-              # -------------------------------------------------------------------
-              # 错误: implicit declaration of function ‘is_vm_hugetlb_page’
-              if [ -f include/linux/pagemap.h ]; then
-                # 在第468行附近（报错行）查找包含 #include 的行，并在其后添加缺失的头文件
-                # 通常在 #include <linux/radix-tree.h> 之后添加
-                sed -i '/#include <linux\/radix-tree.h>/a #include <linux\/hugetlb.h>' include/linux/pagemap.h
-                echo " Patched pagemap.h (Added hugetlb header)"
-              fi
-          
-              # 5. 最终编译
-              echo "=== Starting Kernel Build ==="
-              make -j$(nproc --all) O=out ARCH=arm64
-              
-              # 检查输出
-              if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
-                echo "Kernel built successfully"
-                exit 0
-              else
-                echo "Build failed"
-                exit 1
-              fi
-            shell: /usr/bin/bash -e {0}
-            env:
-              KERNEL_SOURCE: https://github.com/MiCode/Xiaomi_Kernel_OpenSource
-              KERNEL_SOURCE_BRANCH: cezanne-q-oss
-              KERNEL_CONFIG: cezanne_user_defconfig
-              KERNEL_ZIP_NAME: vince_lxc-docker-kernel-4.19_202602190400
-              LLVM_CONFIG: y
-              ENABLE_KERNELSU: false
-              KERNELSU_TAG: main
-              ENABLE_KVM: false
-              ENABLE_LXC_DOCKER: true
+        #ifndef __ASM_STACK_POINTER_H
+        #define __ASM_STACK_POINTER_H
+        
+        static __always_inline unsigned long get_current_sp(void)
+        {
+        unsigned long sp;
+        asm volatile("mov %0, sp" : "=r"(sp));
+        return sp;
+        }
+        
+        #endif /* __ASM_STACK_POINTER_H */
+        EOF
+              find . -type f -name "*.h" -o -name "*.c" | xargs sed -i 's/current_stack_pointer/get_current_sp()/g' || true
+              echo " Patched stack_pointer.h"
+            fi
+            
+            # -------------------------------------------------------------------
+            # 修复 2: spinlock.h (解决 add w4,w4,x2 汇编错误)
+            # -------------------------------------------------------------------
+            if [ -f arch/arm64/include/asm/spinlock.h ]; then
+              sed -i 's/"I" (1 << TICKET_SHIFT)/"r" (1 << TICKET_SHIFT)/g' arch/arm64/include/asm/spinlock.h
+              echo " Patched spinlock.h (Fixed operand mismatch)"
+            fi
+        
+            # -------------------------------------------------------------------
+            # 修复 3: swap_state.c (解决语法错误和 array-bounds)
+            # -------------------------------------------------------------------
+            if [ -f mm/swap_state.c ]; then
+              # 使用更稳定的插入方式
+              sed -i '1i // Fixed Clang\n#pragma GCC diagnostic ignored "-Warray-bounds"\n' mm/swap_state.c
+              echo " Patched mm/swap_state.c"
+            fi
+        
+            # -------------------------------------------------------------------
+            # 修复 4: pagemap.h (解决 implicit declaration)
+            # -------------------------------------------------------------------
+            if [ -f include/linux/pagemap.h ]; then
+              sed -i '/#include <linux\/radix-tree.h>/a #include <linux\/hugetlb.h>' include/linux/pagemap.h
+              echo " Patched pagemap.h"
+            fi
+        
+            # 5. 最终编译
+            echo "=== Starting Kernel Build ==="
+            make -j$(nproc --all) O=out ARCH=arm64
+            
+            # 检查输出
+            if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
+              echo "Kernel built successfully"
+              exit 0
+            else
+              echo "Build failed"
+              exit 1
+            fi
+          shell: /usr/bin/bash -e {0}
+          env:
+            KERNEL_SOURCE: https://github.com/MiCode/Xiaomi_Kernel_OpenSource
+            KERNEL_SOURCE_BRANCH: cezanne-q-oss
+            KERNEL_CONFIG: cezanne_user_defconfig
+            KERNEL_ZIP_NAME: vince_lxc-docker-kernel-4.19_202602190400
+            LLVM_CONFIG: y
+            ENABLE_KERNELSU: false
+            KERNELSU_TAG: main
+            ENABLE_KVM: false
+            ENABLE_LXC_DOCKER: true
                       
     - name: 准备打包内核
       run: |
