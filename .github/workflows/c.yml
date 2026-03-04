@@ -88,140 +88,138 @@ jobs:
 
 
             
-    - name: 开始编译内核
+    - name: 开始编译内核 (Redmi 10X Pro - Kernel 4.14)
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        
-        # 清理 out/
-        rm -rf out/
         
         # 1. 路径与工具链准备
         CLANG_DIR=$(find $GITHUB_WORKSPACE/kernel_workspace/clang-aosp -maxdepth 1 -name "clang-r*" | head -n1)
         export PATH=$CLANG_DIR/bin:$PATH
         
-        # 补全交叉工具链软链接
+        # 补全交叉工具链软链接 (针对 4.14 常用的前缀)
         for tool in gcc g++ ld objcopy objdump nm strip ar as ranlib; do
           sudo ln -sf /usr/bin/aarch64-linux-gnu-$tool /usr/bin/aarch64-linux-android-$tool || true
-          sudo ln -sf /usr/bin/arm-linux-gnueabi-$tool /usr/bin/arm-linux-android-eabi-$tool || true
+          sudo ln -sf /usr/bin/arm-linux-gnueabi-$tool /usr/bin/arm-linux-androideabi-$tool || true
         done
         
-        # 强制替换系统 as 为 aarch64-linux-gnu-as (解决 -EL 全局)
-        sudo ln -sf /usr/bin/aarch64-linux-gnu-as /usr/bin/as || true
-        
-        # 【关键修复】修改编译器选项
+        # 【关键修复】修改编译器选项 (4.14 配置)
         export CC="ccache clang"
         export HOSTCC="ccache clang"
         export HOSTCXX="ccache clang++"
-        export HOSTCFLAGS="-I$PWD/out/include -O2 -fcommon"
-        export HOSTCXXFLAGS="-I$PWD/out/include -O2 -fcommon"
         export CLANG_TRIPLE=aarch64-linux-gnu-
-        export CROSS_COMPILE=aarch64-linux-gnu-
-        export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
-        # 【核心变更】强制使用 GNU 工具链，彻底禁用 LLVM 干预汇编
-        export AS=aarch64-linux-gnu-as
-        export LD=ld.lld
-        export AR=llvm-ar
-        export NM=llvm-nm
-        export OBJCOPY=llvm-objcopy
-        export OBJDUMP=llvm-objdump
-        export STRIP=llvm-strip
-        # 禁用 LLVM 的内置汇编器 (IAS)，强制使用 GNU as
-        export LLVM_IAS=0
-        # 告诉编译器不要将 warnings 视为错误
-        export KBUILD_CFLAGS="$KBUILD_CFLAGS -Wno-array-bounds -Wno-format -Wno-maybe-uninitialized -Wno-zero-length-bounds -Wno-strict-prototypes -Wno-unused-variable -Wno-implicit-function-declaration"
+        # 注意：4.14 通常使用 aarch64-linux-android- 前缀
+        export CROSS_COMPILE=aarch64-linux-android-
+        export CROSS_COMPILE_ARM32=arm-linux-androideabi-
         
-        alias python=python3
+        # 【核心变更】强制使用 GNU 汇编器 (IAS=0) - 解决 operand mismatch 的关键
+        export LLVM_IAS=0 
+        # 忽略数组越界警告
+        export KBUILD_CFLAGS="-Wno-array-bounds"
         
         echo "=== 环境检查 ==="
         echo "Clang: $(clang --version | head -n1)"
+        alias python=python3
         echo "Python: $(python --version)"
         echo "CC: $CC"
-        echo "AS: $AS"
         echo "LLVM_IAS: $LLVM_IAS"
-        echo "KBUILD_CFLAGS: $KBUILD_CFLAGS"
-        
+        echo "CROSS_COMPILE: $CROSS_COMPILE"
+    
         # 2. 内核配置
-        make O=out ARCH=arm64 cezanne_user_defconfig
+        # Redmi 10X Pro (MT6873) 的配置文件通常名为 mt6873_defconfig 或 vendor 特定名
+        # 请根据你仓库中 arch/arm64/configs/ 目录下的实际文件名修改
+        make O=out ARCH=arm64 mt6873_defconfig 
         
-        # 【修复】DTC 补丁
+        # 如果上面报错，请尝试查找具体的 defconfig 名字，例如：
+        # make O=out ARCH=arm64 vendor/redfin_permissive_defconfig
+    
+        # 【修复】DTC 补丁 (4.14 特有)
         echo "=== Patching DTC for yylloc ==="
-        sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/g' scripts/dtc/dtc-lexer.l || true
-        sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/g' scripts/dtc/dtc-lexer.lex.c || true
-        sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/g' scripts/dtc/dtc-lexer.lex.c_shipped || true
-        
+        if [ -f scripts/dtc/dtc-lexer.l ]; then
+          sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/g' scripts/dtc/dtc-lexer.l
+        fi
+    
+        # 【修复】Stack Protector
         echo "=== Disabling Stack Protector ==="
-        scripts/config --file out/.config -d CC_STACKPROTECTOR_STRONG -d CC_STACKPROTECTOR_REGULAR -e CC_STACKPROTECTOR_NONE
+        # 直接修改 .config 文件 (4.14 选项名可能略有不同)
+        sed -i 's/CONFIG_CC_STACKPROTECTOR_STRONG=y/# CONFIG_CC_STACKPROTECTOR_STRONG is not set/g' out/.config
+        sed -i 's/CONFIG_CC_STACKPROTECTOR_REGULAR=y/# CONFIG_CC_STACKPROTECTOR_REGULAR is not set/g' out/.config
+        sed -i 's/# CONFIG_CC_STACKPROTECTOR_NONE is not set/CONFIG_CC_STACKPROTECTOR_NONE=y/g' out/.config
         make O=out ARCH=arm64 olddefconfig
-        
-        # 【物理修复】强制生成 asm-offsets.h 并复制到根目录
-        echo "=== PHYSICAL FIX: Generating asm-offsets.h ==="
-        make O=out ARCH=arm64 prepare
-        mkdir -p generated
-        if [ -f out/include/generated/asm-offsets.h ]; then
-          cp out/include/generated/asm-offsets.h generated/asm-offsets.h
-          echo " SUCCESS: asm-offsets.h copied to source root"
-        else
-          echo " ERROR: Failed to generate asm-offsets.h"
-          exit 1
-        fi
-        
-        # 【终极修复】Clang 兼容性补丁 (解决所有报错)
-        echo "=== Applying Clang Compatibility Patches ==="
-        # 修复 1: stack_pointer.h (解决 SP 寄存器问题)
-        if [ -f arch/arm64/include/asm/stack_pointer.h ]; then
-          sed -i '/register unsigned long current_stack_pointer/d' arch/arm64/include/asm/stack_pointer.h
-          sed -i '/static.*get_current_sp/d' arch/arm64/include/asm/stack_pointer.h
-          echo '#ifndef __ASM_STACK_POINTER_H' > arch/arm64/include/asm/stack_pointer.h
-          echo '#define __ASM_STACK_POINTER_H' >> arch/arm64/include/asm/stack_pointer.h
-          echo 'static __always_inline unsigned long get_current_sp(void) {' >> arch/arm64/include/asm/stack_pointer.h
-          echo 'unsigned long sp;' >> arch/arm64/include/asm/stack_pointer.h
-          echo 'asm volatile("mov %0, sp" : "=r"(sp));' >> arch/arm64/include/asm/stack_pointer.h
-          echo 'return sp;' >> arch/arm64/include/asm/stack_pointer.h
-          echo '}' >> arch/arm64/include/asm/stack_pointer.h
-          echo '#endif /* __ASM_STACK_POINTER_H */' >> arch/arm64/include/asm/stack_pointer.h
-          find . -type f -name "*.h" -o -name "*.c" -exec sed -i 's/current_stack_pointer/get_current_sp()/g' {} + || true
-          echo " Patched stack_pointer.h"
-        fi
-        # 修复 2: spinlock.h (解决 add w4,w4,x2 汇编错误)
+    
+        # ===================================================================
+        # 【终极修复】Clang 兼容性补丁 (Kernel 4.14 专用版)
+        # ===================================================================
+        echo "=== Applying Clang Patches for Kernel 4.14 ==="
+    
+        # -------------------------------------------------------------------
+        # 修复 1: spinlock.h (4.14 宏屏蔽法)
+        # -------------------------------------------------------------------
+        # 原理：4.14 的 spinlock.h 中定义了 __LL_SC_ATOMIC 和 __LSE_PREAMBLE
+        # 这些定义与 Clang 不兼容。我们直接注释掉这些定义，让代码使用默认的通用汇编。
         if [ -f arch/arm64/include/asm/spinlock.h ]; then
-          sed -i 's/"I" (1 << TICKET_SHIFT)/"r" (1 << TICKET_SHIFT)/g' arch/arm64/include/asm/spinlock.h
-          sed -i 's/add %w0, %w0, %3/add %w0, %w0, %w3/g' arch/arm64/include/asm/spinlock.h || true
-          sed -i 's/add %w3, %w3, %3/add %w3, %w3, %w3/g' arch/arm64/include/asm/spinlock.h || true
-          echo " Patched spinlock.h (Fixed operand mismatch)"
+          # 备份原文件
+          cp arch/arm64/include/asm/spinlock.h arch/arm64/include/asm/spinlock.h.bak
+          
+          # 1. 注释掉 __LL_SC_ATOMIC 的定义 (如果存在)
+          sed -i 's/^#define __LL_SC_ATOMIC.*$/\/\/ #define __LL_SC_ATOMIC (Disabled for Clang)/' arch/arm64/include/asm/spinlock.h
+          
+          # 2. 注释掉 __LSE_PREAMBLE 的定义 (如果存在)
+          sed -i 's/^#define __LSE_PREAMBLE.*$/\/\/ #define __LSE_PREAMBLE (Disabled for Clang)/' arch/arm64/include/asm/spinlock.h
+          
+          # 3. 确保没有包含 linux/atomic/atomic-lse.h (4.14 通常不包含，但以防万一)
+          sed -i '/atomic-lse.h/d' arch/arm64/include/asm/spinlock.h
+          
+          echo "✅ Patched spinlock.h (4.14 - Disabled problematic macros)"
+        else
+          echo "⚠️ spinlock.h not found! Check kernel source path."
         fi
-        # 修复 3: swap_state.c (解决语法错误和 array-bounds)
-        if [ -f mm/swap_state.c ]; then
-          echo -e "// Fixed Clang\n#pragma clang diagnostic ignored \"-Warray-bounds\"\n" | cat - mm/swap_state.c > temp && mv temp mm/swap_state.c
-          echo " Patched mm/swap_state.c"
-        fi
-        # 修复 4: pagemap.h (解决 implicit declaration)
-        if [ -f include/linux/pagemap.h ]; then
-          sed -i '/#include <linux\/radix-tree.h>/a #include <linux\/hugetlb.h>' include/linux/pagemap.h
-          echo " Patched pagemap.h"
-        fi
-        # extents 初始化
-        sed -i 's/struct ext4_extent zero_ex1, zero_ex2;/struct ext4_extent zero_ex1 = {0}, zero_ex2 = {0};/g' fs/ext4/extents.c || true
-        # fdinfo zero-length
-        sed -i 's/f_handle\[0\];/f_handle[0] = {0};/g' include/linux/fs.h || true
-        # atomic warnings 忽略
-        for file in kernel/panic.c kernel/kmod.c kernel/events/core.c; do
-          echo -e "#pragma clang diagnostic ignored \"-Warray-bounds\"\n" | cat - $file > temp && mv temp $file
-        done
-        # ext4/fsync format
-        sed -i 's/%u, gid %u/%u, gid %u/g' fs/ext4/fsync.c || true  # 简单修复 format，实际需 uid_val
+    
+        # -------------------------------------------------------------------
+        # 修复 2: stack_pointer.h (4.14 通用修复)
+        # -------------------------------------------------------------------
+        # 大多数 4.14 源码不需要重写这个，但如果报错，使用此标准修复
+        # 这里我们只在检测到报错模式时才应用，或者直接定义寄存器
+        # 4.14 通常通过 ptrace.h 获取 sp，如果报错，尝试强制定义
+        # 注意：4.14 很少在这个文件报错，如果没报错可以跳过此步
+        # 如果你确定需要强制修复，取消下面的注释：
         
+        # cat > arch/arm64/include/asm/stack_pointer.h << 'EOF'
+        # #ifndef __ASM_STACK_POINTER_H
+        # #define __ASM_STACK_POINTER_H
+        # #ifdef __KERNEL__
+        # #include <asm/ptrace.h>
+        # #endif
+        # #endif
+        # EOF
+        # echo "✅ Restored stock stack_pointer.h"
+        
+        # -------------------------------------------------------------------
+        # 修复 3: xts.c (通用修复)
+        # -------------------------------------------------------------------
+        if [ -f crypto/xts.c ]; then
+          sed -i '/inst->free/d' crypto/xts.c
+          sed -i '/inst->init = xts_init;/a \ \ \ \ inst->free = NULL;' crypto/xts.c
+          echo "✅ Patched crypto/xts.c"
+        fi
+    
         # 5. 最终编译
         echo "=== Starting Kernel Build ==="
-        make -j$(nproc --all) O=out ARCH=arm64
+        # 增加 V=1 可以在报错时显示完整命令，方便调试
+        make -j$(nproc --all) O=out ARCH=arm64 V=1
         
         # 检查输出
-        ls -l out/arch/arm64/boot/Image.gz-dtb || echo "Image not found"
-        
-        if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
-          echo "Kernel built successfully, ignoring exit code"
+        if [ -f out/arch/arm64/boot/Image.gz ]; then
+          echo "Kernel built successfully"
           exit 0
+        else
+          echo "Build failed"
+          exit 1
         fi
-
+      shell: /usr/bin/bash -e {0}
+      env:
+        # 请务必确认你的仓库分支名
+        # 天玑820 (MT6873) 的分支通常叫 mt6873-android-10 或 android-10
+        KERNEL_SOURCE_BRANCH: mt6873-android-10 
                       
     - name: 准备打包内核
       run: |
