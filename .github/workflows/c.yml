@@ -30,14 +30,14 @@ jobs:
         sudo -E apt-get -y -qq install build-essential gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi gcc-arm-linux-gnueabihf
         mkdir -p $GITHUB_WORKSPACE/kernel_workspace
     
-    - name: 下载谷歌 Clang11 编译器（必须用这个！）
+    - name: 下载谷歌 Clang12 编译器（必须用这个！）
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
         rm -rf clang-aosp
         mkdir -p clang-aosp
         git clone -q --depth=1 --single-branch \
           https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 \
-          -b android11-release clang-aosp
+          -b android12-release clang-aosp
           
     - name: 安装Python2 并设置为默认
       run: |
@@ -101,8 +101,8 @@ jobs:
         echo "=== Pre-building dtc to fix yylloc race ==="
         make -j2 O=out ARCH=arm64 scripts/dtc/dtc || true
         
-        # ================ 最终编译命令（Clang11 + 完美参数）================
-        echo "=== Starting build with Clang11 + correct AS ==="
+        # ================ 最终编译命令（Clang12 + 完美参数）================
+        echo "=== Starting build with Clang12 + correct AS ==="
         make -j$(nproc --all) O=out ARCH=arm64 \
           CC="ccache clang" \
           HOSTCC="ccache clang" \
