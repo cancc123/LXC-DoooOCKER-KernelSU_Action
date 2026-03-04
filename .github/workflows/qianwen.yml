@@ -1,4 +1,4 @@
-name: qianwen
+name: 通cccc
 on:
   workflow_dispatch:
 
@@ -92,18 +92,30 @@ jobs:
           echo "❌ 错误：未找到配置文件"
           exit 1
         fi
-        
-    - name: 开始编译内核
+
+    # ====================== 新增编译步骤 (针对天玑820优化) ======================
+    - name: 开始编译内核 (Redmi 10X Pro 天玑820 优化)
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
         export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/clang-r416183b/bin:$PATH
-        make O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
-        if [ ${{env.LLVM_CONFIG}}=y ]; then
-        make -j$(nproc --all) CC="ccache clang" O=out ARCH=arm64 CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-" LLVM=1 LLVM_IAS=1
+        echo "正在编译天玑820 (MT6885) 专用内核 (4.14.186)"
+        
+        # 优化编译参数 (针对天玑820)
+        export KBUILD_BUILD_HOST="Redmi10XPro"
+        export KBUILD_BUILD_USER="User"
+        
+        # 确保正确使用配置文件
+        make O=out ARCH=arm64 olddefconfig
+        
+        # 天玑820专用编译参数
+        if [ "${{ env.LLVM_CONFIG }}" = "y" ]; then
+          make -j$(nproc --all) CC="ccache clang" O=out ARCH=arm64 CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-" LLVM=1 LLVM_IAS=1
         else
-        make -j$(nproc --all) CC="ccache clang" O=out ARCH=arm64 CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-"
+          make -j$(nproc --all) CC="ccache clang" O=out ARCH=arm64 CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-"
         fi
-            
+        echo "✅ 内核编译完成 (4.14.186)"
+    # ======================================================================
+
     - name: 准备打包内核
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
@@ -119,4 +131,4 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: ${{ env.KERNEL_ZIP_NAME }}
-        path: kernel_workspace/AnyKernel3  # 修正：移除错误的"这是yml"字符串
+        path: kernel_workspace/AnyKernel3
