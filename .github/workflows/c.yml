@@ -109,7 +109,7 @@ jobs:
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
         
-        # 1. 路径与工具链准备 (同之前)
+        # 1. 路径与工具链准备
         CLANG_DIR=$(find $GITHUB_WORKSPACE/kernel_workspace/clang-aosp -maxdepth 1 -name "clang-r*" | head -n1)
         export PATH=$CLANG_DIR/bin:$PATH
         
@@ -126,54 +126,52 @@ jobs:
         export CROSS_COMPILE=aarch64-linux-android-
         export CROSS_COMPILE_ARM32=arm-linux-androideabi-
         
-        # 【重要修复】强制使用 GNU 汇编器 (解决 Clang 语法不兼容问题)
-        export LLVM_IAS=0 
+        # 【核心修复】强制使用 GNU 汇编器 + 忽略数组越界警告
+        export LLVM_IAS=0
         export KBUILD_CFLAGS="-Wno-array-bounds"
-    
-        # 3. 应用配置 (这一步会根据 .config 自动处理依赖)
+        
+        # 3. 应用基础配置
         make O=out ARCH=arm64 olddefconfig
-    
-        # ===================================================================
-        # 【针对性修复】根据你的配置文件，某些模块可能需要微调
-        # ===================================================================
         
-        # 修复 1: 如果配置中启用了 LTO (链接时优化)，Clang 可能会报错
-        # 我们在 .config 中已经看到 CONFIG_LTO_CLANG=y，这通常没问题，但如果报错，可以尝试关闭
-        # sed -i 's/CONFIG_LTO_CLANG=y/# CONFIG_LTO_CLANG is not set/g' out/.config
-        # sed -i 's/CONFIG_LTO=y/# CONFIG_LTO is not set/g' out/.config
-        
-        # 修复 2: 强制关闭 Stack Protector (如果之前报错)
+        # ===================================================================
+        # 【关键修复】强制关闭不兼容的配置项
+        # ===================================================================
+        echo "=== 关闭 LTO 和 Stack Protector ==="
+        # 关闭 LTO (链接时优化) - Clang 12 不支持
+        sed -i 's/CONFIG_LTO_CLANG=y/# CONFIG_LTO_CLANG is not set/g' out/.config
+        sed -i 's/CONFIG_LTO=y/# CONFIG_LTO is not set/g' out/.config
+        # 关闭 Stack Protector - 与 Clang 不兼容
         sed -i 's/CONFIG_CC_STACKPROTECTOR_STRONG=y/# CONFIG_CC_STACKPROTECTOR_STRONG is not set/g' out/.config
         sed -i 's/CONFIG_CC_STACKPROTECTOR_REGULAR=y/# CONFIG_CC_STACKPROTECTOR_REGULAR is not set/g' out/.config
         sed -i 's/# CONFIG_CC_STACKPROTECTOR_NONE is not set/CONFIG_CC_STACKPROTECTOR_NONE=y/g' out/.config
         
         # 重新生成配置
         make O=out ARCH=arm64 olddefconfig
-    
+        
         # ===================================================================
-        # 【终极防线】Clang 兼容性补丁 (Kernel 4.14 专用)
+        # 【Clang 兼容性补丁】(Kernel 4.14 专用)
         # ===================================================================
-        # 即使使用了原厂配置，编译器本身的语法限制仍需处理
         echo "=== 应用 Clang 兼容性补丁 ==="
-    
-        # 修复 spinlock.h (4.14 版本)
+        
+        # 修复 spinlock.h - 解决 Clang 语法不兼容
         if [ -f arch/arm64/include/asm/spinlock.h ]; then
-          # 方法：注释掉导致 Clang 报错的宏
-          sed -i 's/^#define __LL_SC_ATOMIC/#\/\/ #define __LL_SC_ATOMIC/' arch/arm64/include/asm/spinlock.h
-          sed -i 's/^#define __LSE_PREAMBLE/#\/\/ #define __LSE_PREAMBLE/' arch/arm64/include/asm/spinlock.h
+          sed -i 's/^#define __LL_SC_ATOMIC.*$/\/\/ #define __LL_SC_ATOMIC (Disabled for Clang)/' arch/arm64/include/asm/spinlock.h
+          sed -i 's/^#define __LSE_PREAMBLE.*$/\/\/ #define __LSE_PREAMBLE (Disabled for Clang)/' arch/arm64/include/asm/spinlock.h
           echo "✅ 修复 spinlock.h"
+        else
+          echo "⚠️ spinlock.h 未找到！请检查内核源码路径。"
         fi
-    
+        
         # 4. 开始编译
-        echo "=== 开始编译 ==="
+        echo "=== 开始编译内核 ==="
         make -j$(nproc --all) O=out ARCH=arm64 Image.gz-dtb
         
-        # 检查输出
+        # 检查编译结果
         if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
-          echo "🎉 编译成功！"
+          echo "🎉 内核编译成功！"
           exit 0
         else
-          echo "❌ 编译失败"
+          echo "❌ 编译失败，请检查上述日志"
           exit 1
         fi
       shell: /usr/bin/bash -e {0}
