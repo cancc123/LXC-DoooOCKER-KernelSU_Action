@@ -11,6 +11,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+
     - name: 环境变量配置
       run: |
         cat config.env | grep KERNEL_SOURCE= >> $GITHUB_ENV
@@ -22,7 +23,8 @@ jobs:
         cat config.env | grep KERNELSU_TAG= >> $GITHUB_ENV
         cat config.env | grep ENABLE_KVM= >> $GITHUB_ENV
         cat config.env | grep ENABLE_LXC_DOCKER= >> $GITHUB_ENV
-
+        cat config.env | grep ENABLE_KERNELSU= >> $GITHUB_ENV
+        cat config.env | grep KERNELSU_TAG= >> $GITHUB_ENV
     - name: 构建编译内核环境
       run: |
         sudo apt-get update
@@ -69,23 +71,12 @@ jobs:
         if [ -f android-kernel/kernel/cgroup/cgroup.c ]; then
         ./runcpatch.sh android-kernel/kernel/cgroup/cgroup.c               
         fi
-    - name: 应用关键修复：解决 TICKET_SHIFT 越界
-      run: |
-        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        echo "=== Applying TICKET_SHIFT fix ==="
-        sed -i 's/#define TICKET_SHIFT 16/#define TICKET_SHIFT 15/g' arch/arm64/include/asm/spinlock.h
-        echo "Fix applied to arch/arm64/include/asm/spinlock.h"
-    - name: 应用关键修复：解决 yylloc 多重定义
-      run: |
-        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        echo "=== Applying yylloc fix for dtc ==="
-        sed -i 's/CFLAGS +=/CFLAGS += -fno-common /g' scripts/dtc/Makefile
-        echo "Fix applied to scripts/dtc/Makefile"
     - name: 设置ccache缓存
       uses: hendrikmuhs/ccache-action@v1.2
       with:
         key: build-kernel-mido-kernel
         max-size: 2G
+
 
     - name: 开始编译内核
       run: |
@@ -130,19 +121,18 @@ jobs:
           LLVM=1 \
           LLVM_IAS=1
         # ===================================================================
-    
+        
     - name: 准备打包内核
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
         git clone https://github.com/osm0sis/AnyKernel3
-        # 使用自动检测的BLOCK路径，而不是硬编码路径
-        sed -i 's/BLOCK=.*;/BLOCK=auto;/g' AnyKernel3/anykernel.sh
-        # 确保设备检查和槽位设备支持启用
-        sed -i 's/do.devicecheck=0/do.devicecheck=1/g' AnyKernel3/anykernel.sh
-        sed -i 's/is_slot_device=0/is_slot_device=1/g' AnyKernel3/anykernel.sh
+        sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
+        sed -i 's!BLOCK=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!BLOCK=/dev/block/bootdevice/by-name/boot;!g' AnyKernel3/anykernel.sh
+        sed -i 's/is_slot_device=1;/is_slot_device=0;/g' AnyKernel3/anykernel.sh
         cp android-kernel/out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
         rm -rf AnyKernel3/.git* AnyKernel3/README.md
         rm -rf AnyKernel3/ramdisk AnyKernel3/modules AnyKernel3/patch
+    
     
     - name: 打包并上传
       uses: actions/upload-artifact@v4
