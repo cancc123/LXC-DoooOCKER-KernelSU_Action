@@ -1,4 +1,3 @@
-
 name: 通cccc
 on:
   workflow_dispatch:
@@ -12,7 +11,6 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-
     - name: 环境变量配置
       run: |
         cat config.env | grep KERNEL_SOURCE= >> $GITHUB_ENV
@@ -24,8 +22,7 @@ jobs:
         cat config.env | grep KERNELSU_TAG= >> $GITHUB_ENV
         cat config.env | grep ENABLE_KVM= >> $GITHUB_ENV
         cat config.env | grep ENABLE_LXC_DOCKER= >> $GITHUB_ENV
-        cat config.env | grep ENABLE_KERNELSU= >> $GITHUB_ENV
-        cat config.env | grep KERNELSU_TAG= >> $GITHUB_ENV
+
     - name: 构建编译内核环境
       run: |
         sudo apt-get update
@@ -33,14 +30,14 @@ jobs:
         sudo -E apt-get -y -qq install build-essential gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi gcc-arm-linux-gnueabihf
         mkdir -p $GITHUB_WORKSPACE/kernel_workspace
     
-    - name: 下载谷歌 Clang12 编译器（必须用这个！）
+    - name: 下载谷歌 Clang11 编译器（必须用这个！）
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
         rm -rf clang-aosp
         mkdir -p clang-aosp
         git clone -q --depth=1 --single-branch \
           https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 \
-          -b android12-release clang-aosp
+          -b android11-release clang-aosp
           
     - name: 安装Python2 并设置为默认
       run: |
@@ -78,7 +75,6 @@ jobs:
         key: build-kernel-mido-kernel
         max-size: 2G
 
-
     - name: 开始编译内核
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
@@ -105,8 +101,8 @@ jobs:
         echo "=== Pre-building dtc to fix yylloc race ==="
         make -j2 O=out ARCH=arm64 scripts/dtc/dtc || true
         
-        # ================ 最终编译命令（Clang12 + 完美参数）================
-        echo "=== Starting build with Clang12 + correct AS ==="
+        # ================ 最终编译命令（Clang11 + 完美参数）================
+        echo "=== Starting build with Clang11 + correct AS ==="
         make -j$(nproc --all) O=out ARCH=arm64 \
           CC="ccache clang" \
           HOSTCC="ccache clang" \
@@ -122,18 +118,19 @@ jobs:
           LLVM=1 \
           LLVM_IAS=1
         # ===================================================================
-        
+    
     - name: 准备打包内核
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
         git clone https://github.com/osm0sis/AnyKernel3
-        sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
-        sed -i 's!BLOCK=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!BLOCK=/dev/block/bootdevice/by-name/boot;!g' AnyKernel3/anykernel.sh
-        sed -i 's/is_slot_device=1;/is_slot_device=0;/g' AnyKernel3/anykernel.sh
+        # 使用自动检测的BLOCK路径，而不是硬编码路径
+        sed -i 's/BLOCK=.*;/BLOCK=auto;/g' AnyKernel3/anykernel.sh
+        # 确保设备检查和槽位设备支持启用
+        sed -i 's/do.devicecheck=0/do.devicecheck=1/g' AnyKernel3/anykernel.sh
+        sed -i 's/is_slot_device=0/is_slot_device=1/g' AnyKernel3/anykernel.sh
         cp android-kernel/out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
         rm -rf AnyKernel3/.git* AnyKernel3/README.md
         rm -rf AnyKernel3/ramdisk AnyKernel3/modules AnyKernel3/patch
-    
     
     - name: 打包并上传
       uses: actions/upload-artifact@v4
