@@ -69,6 +69,31 @@ jobs:
         if [ -f android-kernel/kernel/cgroup/cgroup.c ]; then
         ./runcpatch.sh android-kernel/kernel/cgroup/cgroup.c               
         fi
+    - name: 应用关键修复：解决 yylloc 多重定义
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        echo "=== Applying yylloc fix for dtc ==="
+        # 在预编译 dtc 时添加 -fno-common 选项
+        sed -i 's/$(MAKE) -C dtc/dtctools -j$(jobs) $(MAKE) -C dtc/g' Makefile
+        sed -i 's/$(MAKE) -C dtc/dtctools -j$(jobs) $(MAKE) -C dtc/g' scripts/Makefile.host
+        echo "Fix applied to dtc build commands"
+
+    - name: 应用关键修复：解决 sp 寄存器问题
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        echo "=== Applying sp register fix ==="
+        # 修复 stack_pointer.h 文件
+        sed -i 's/register unsigned long current_stack_pointer asm ("sp");/static inline unsigned long current_stack_pointer(void) { unsigned long sp; asm("mov %0, sp" : "=r" (sp)); return sp; }/g' arch/arm64/include/asm/stack_pointer.h
+        echo "Fix applied to stack_pointer.h"
+
+    - name: 应用关键修复：解决 TICKET_SHIFT 越界
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        echo "=== Applying TICKET_SHIFT fix ==="
+        # 修复 spinlock.h 文件
+        sed -i 's/#define TICKET_SHIFT 16/#define TICKET_SHIFT 15/g' include/linux/spinlock.h
+        echo "Fix applied to spinlock.h"
+
     - name: 设置ccache缓存
       uses: hendrikmuhs/ccache-action@v1.2
       with:
@@ -99,7 +124,7 @@ jobs:
         
         # 预编译 dtc 解决 yylloc duplicate（关键！）
         echo "=== Pre-building dtc to fix yylloc race ==="
-        make -j2 O=out ARCH=arm64 scripts/dtc/dtc || true
+        make -j2 O=out ARCH=arm64 scripts/dtc/dtc CFLAGS="-fno-common" || true
         
         # ================ 最终编译命令（Clang12 + 完美参数）================
         echo "=== Starting build with Clang12 + correct AS ==="
