@@ -1,3 +1,4 @@
+
 name: 通cccc
 on:
   workflow_dispatch:
@@ -25,7 +26,6 @@ jobs:
         cat config.env | grep ENABLE_LXC_DOCKER= >> $GITHUB_ENV
         cat config.env | grep ENABLE_KERNELSU= >> $GITHUB_ENV
         cat config.env | grep KERNELSU_TAG= >> $GITHUB_ENV
-        
     - name: 构建编译内核环境
       run: |
         sudo apt-get update
@@ -49,7 +49,6 @@ jobs:
         sudo ln -sf /usr/bin/python2 /usr/bin/python
         python --version
         echo "Python2 设置完成 ✅"
-        
     - name: 下载内核源码
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
@@ -62,7 +61,6 @@ jobs:
         chmod 755 add-lxc-docker-custom3.sh
         ./add-lxc-docker-custom3.sh android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
         echo "# CONFIG_ANDROID_PARANOID_NETWORK is not set" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
-        
     - name: 添加runc补丁
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
@@ -74,184 +72,57 @@ jobs:
         if [ -f android-kernel/kernel/cgroup/cgroup.c ]; then
         ./runcpatch.sh android-kernel/kernel/cgroup/cgroup.c               
         fi
-        
     - name: 设置ccache缓存
       uses: hendrikmuhs/ccache-action@v1.2
       with:
         key: build-kernel-mido-kernel
         max-size: 2G
 
-        
+
     - name: 开始编译内核
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
         
-        # 1. 路径与工具链准备
+        # Clang PATH + 符号链接修复（解决 gcc-version.sh 报错）
         CLANG_DIR=$(find $GITHUB_WORKSPACE/kernel_workspace/clang-aosp -maxdepth 1 -name "clang-r*" | head -n1)
         export PATH=$CLANG_DIR/bin:$PATH
+        sudo ln -sf /usr/bin/aarch64-linux-gnu-gcc /usr/bin/aarch64-linux-android-gcc || true
+        sudo ln -sf /usr/bin/aarch64-linux-gnu-g++ /usr/bin/aarch64-linux-android-g++ || true
         
-        # 补全交叉工具链软链接
-        for tool in gcc g++ ld objcopy objdump nm strip ar as ranlib; do
-          sudo ln -sf /usr/bin/aarch64-linux-gnu-$tool /usr/bin/aarch64-linux-android-$tool || true
-          sudo ln -sf /usr/bin/arm-linux-gnueabi-$tool /usr/bin/arm-linux-android-eabi-$tool || true
-        done
+        echo "=== Using Clang: $(clang --version | head -n1) ==="
+        echo "=== Python: $(python --version) ==="
         
-        # 【关键修复】修改编译器选项
-        export CC="ccache clang"
-        export HOSTCC="ccache clang"
-        export HOSTCXX="ccache clang++"
-        export HOSTCFLAGS="-I$PWD/out/include"
-        export HOSTCXXFLAGS="-I$PWD/out/include"
-        export CLANG_TRIPLE=aarch64-linux-gnu-
-        export CROSS_COMPILE=aarch64-linux-gnu-
-        export CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+        make O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
         
-        # 【核心变更】强制使用 GNU 工具链，彻底禁用 LLVM 干预汇编
-        export AS=aarch64-linux-gnu-as
-        export LD=aarch64-linux-gnu-ld
-        export AR=llvm-ar
-        export NM=llvm-nm
-        export OBJCOPY=llvm-objcopy
-        export OBJDUMP=llvm-objdump
-        export STRIP=llvm-strip
-        
-        # ===================================================================
-        # 【新增修复】解决 "operand mismatch" 和 "array-bounds" 错误
-        # ===================================================================
-        # 1. 禁用 LLVM 的内置汇编器 (IAS)，强制使用 GNU as
-        export LLVM_IAS=0 
-        # 2. 告诉编译器不要将 array-bounds 警告视为错误 (通用保险)
-        export KBUILD_CFLAGS="$KBUILD_CFLAGS -Wno-array-bounds"
-        
-        echo "=== 环境检查 ==="
-        echo "Clang: $(clang --version | head -n1)"
-        # 修复 Python 警告（强制脚本使用 python3，因为 python2 已经停止支持）
-        alias python=python3
-        echo "Python: $(python --version)"
-        echo "CC: $CC"
-        echo "AS: $AS"
-        echo "LLVM_IAS: $LLVM_IAS"
-        echo "KBUILD_CFLAGS: $KBUILD_CFLAGS"
-    
-        # 2. 内核配置
-        make O=out ARCH=arm64 cezanne_user_defconfig
-        
-        # 【修复】DTC 补丁
-        echo "=== Patching DTC for yylloc ==="
-        if [ -f scripts/dtc/dtc-lexer.l ]; then
-          sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/g' scripts/dtc/dtc-lexer.l
-        fi
-        if [ -f scripts/dtc/dtc-lexer.lex.c ]; then
-          sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/g' scripts/dtc/dtc-lexer.lex.c
-        fi
-        if [ -f scripts/dtc/dtc-lexer.lex.c_shipped ]; then
-          sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/g' scripts/dtc/dtc-lexer.lex.c_shipped
-        fi
-        
-        echo "=== Disabling Stack Protector ==="
+        # Stack Protector 修复
+        echo "=== Disabling ALL Stack Protector ==="
         scripts/config --file out/.config -d CC_STACKPROTECTOR_STRONG
         scripts/config --file out/.config -d CC_STACKPROTECTOR_REGULAR
         scripts/config --file out/.config -e CC_STACKPROTECTOR_NONE
         make O=out ARCH=arm64 olddefconfig
-    
+        
+        # 预编译 dtc 解决 yylloc duplicate（关键！）
+        echo "=== Pre-building dtc to fix yylloc race ==="
+        make -j2 O=out ARCH=arm64 scripts/dtc/dtc || true
+        
+        # ================ 最终编译命令（Clang12 + 完美参数）================
+        echo "=== Starting build with Clang12 + correct AS ==="
+        make -j$(nproc --all) O=out ARCH=arm64 \
+          CC="ccache clang" \
+          HOSTCC="ccache clang" \
+          LD=ld.lld \
+          HOSTLD=ld.lld \
+          AR=llvm-ar \
+          NM=llvm-nm \
+          OBJCOPY=llvm-objcopy \
+          OBJDUMP=llvm-objdump \
+          STRIP=llvm-strip \
+          AS=aarch64-linux-gnu-as \
+          HOSTAS=aarch64-linux-gnu-as \
+          LLVM=1 \
+          LLVM_IAS=1
         # ===================================================================
-        # 【物理修复】强制生成 asm-offsets.h 并复制到根目录
-        # ===================================================================
-        echo "=== PHYSICAL FIX: Generating asm-offsets.h ==="
         
-        # 1. 强制生成中间文件
-        make O=out ARCH=arm64 prepare
-        
-        # 2. 在源码根目录创建 generated 文件夹
-        mkdir -p generated
-        
-        # 3. 检查并复制文件
-        if [ -f out/include/generated/asm-offsets.h ]; then
-          cp out/include/generated/asm-offsets.h generated/asm-offsets.h
-          echo " SUCCESS: asm-offsets.h copied to source root"
-        else
-          echo " ERROR: Failed to generate asm-offsets.h"
-          exit 1
-        fi
-    
-        # ===================================================================
-        # 【终极修复】Clang 兼容性补丁 (解决所有报错)
-        # ===================================================================
-        echo "=== Applying Clang Compatibility Patches ==="
-        
-        # -------------------------------------------------------------------
-        # 修复 1: stack_pointer.h (解决 SP 寄存器问题)
-        # -------------------------------------------------------------------
-        if [ -f arch/arm64/include/asm/stack_pointer.h ]; then
-          sed -i '/register unsigned long current_stack_pointer/d' arch/arm64/include/asm/stack_pointer.h
-          sed -i '/static.*get_current_sp/d' arch/arm64/include/asm/stack_pointer.h
-          # 关键修复：EOF 必须顶格，不能有缩进！
-          cat > arch/arm64/include/asm/stack_pointer.h << 'EOF'
-        #ifndef __ASM_STACK_POINTER_H
-        #define __ASM_STACK_POINTER_H
-        
-        static __always_inline unsigned long get_current_sp(void)
-        {
-        unsigned long sp;
-        asm volatile("mov %0, sp" : "=r"(sp));
-        return sp;
-        }
-        
-        #endif /* __ASM_STACK_POINTER_H */
-        EOF
-              find . -type f -name "*.h" -o -name "*.c" | xargs sed -i 's/current_stack_pointer/get_current_sp()/g' || true
-              echo " Patched stack_pointer.h"
-            fi
-            
-            # -------------------------------------------------------------------
-            # 修复 2: spinlock.h (解决 add w4,w4,x2 汇编错误)
-            # -------------------------------------------------------------------
-            if [ -f arch/arm64/include/asm/spinlock.h ]; then
-              sed -i 's/"I" (1 << TICKET_SHIFT)/"r" (1 << TICKET_SHIFT)/g' arch/arm64/include/asm/spinlock.h
-              echo " Patched spinlock.h (Fixed operand mismatch)"
-            fi
-        
-            # -------------------------------------------------------------------
-            # 修复 3: swap_state.c (解决语法错误和 array-bounds)
-            # -------------------------------------------------------------------
-            if [ -f mm/swap_state.c ]; then
-              # 使用更稳定的插入方式
-              sed -i '1i // Fixed Clang\n#pragma GCC diagnostic ignored "-Warray-bounds"\n' mm/swap_state.c
-              echo " Patched mm/swap_state.c"
-            fi
-        
-            # -------------------------------------------------------------------
-            # 修复 4: pagemap.h (解决 implicit declaration)
-            # -------------------------------------------------------------------
-            if [ -f include/linux/pagemap.h ]; then
-              sed -i '/#include <linux\/radix-tree.h>/a #include <linux\/hugetlb.h>' include/linux/pagemap.h
-              echo " Patched pagemap.h"
-            fi
-        
-            # 5. 最终编译
-            echo "=== Starting Kernel Build ==="
-            make -j$(nproc --all) O=out ARCH=arm64
-            
-            # 检查输出
-            if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
-              echo "Kernel built successfully"
-              exit 0
-            else
-              echo "Build failed"
-              exit 1
-            fi
-          shell: /usr/bin/bash -e {0}
-          env:
-            KERNEL_SOURCE: https://github.com/MiCode/Xiaomi_Kernel_OpenSource
-            KERNEL_SOURCE_BRANCH: cezanne-q-oss
-            KERNEL_CONFIG: cezanne_user_defconfig
-            KERNEL_ZIP_NAME: vince_lxc-docker-kernel-4.19_202602190400
-            LLVM_CONFIG: y
-            ENABLE_KERNELSU: false
-            KERNELSU_TAG: main
-            ENABLE_KVM: false
-            ENABLE_LXC_DOCKER: true
-                      
     - name: 准备打包内核
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
