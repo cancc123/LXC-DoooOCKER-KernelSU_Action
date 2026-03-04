@@ -1,4 +1,4 @@
-name: 通cccc
+name: q
 on:
   workflow_dispatch:
 
