@@ -43,7 +43,16 @@ jobs:
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
         git clone ${{ env.KERNEL_SOURCE }} -b ${{ env.KERNEL_SOURCE_BRANCH }} android-kernel --depth=1
-                      
+
+        
+    - name: 安装Python2 并设置为默认
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y python2-minimal
+        sudo ln -sf /usr/bin/python2 /usr/bin/python
+        python --version
+        echo "Python2 设置完成 ✅"   
+        
     - name: 开启lxc和docker配置
       if: env.ENABLE_LXC_DOCKER == 'true'
       run: |
