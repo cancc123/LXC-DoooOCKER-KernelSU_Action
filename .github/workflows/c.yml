@@ -88,139 +88,96 @@ jobs:
 
 
             
-    - name: 开始编译内核 (Redmi 10X Pro - Kernel 4.14)
+    - name: 准备内核配置文件 (使用提取的原厂配置)
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
         
-        # 1. 路径与工具链准备
+        # 1. 将你上传的配置文件复制为内核的标准配置文件
+        # 假设你把文件放到了仓库根目录，名为 config.txt
+        cp $GITHUB_WORKSPACE/config.txt .config
+        
+        # 2. 检查配置文件是否生效
+        if [ -f ".config" ]; then
+          echo "✅ 成功加载原厂配置文件"
+          echo "内核版本: $(grep "Linux/arm64" .config | head -n1)"
+        else
+          echo "❌ 错误：未找到配置文件"
+          exit 1
+        fi
+    # ----------------------------------------------------------------------------------
+    - name: 开始编译内核
+      run: |
+        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+        
+        # 1. 路径与工具链准备 (同之前)
         CLANG_DIR=$(find $GITHUB_WORKSPACE/kernel_workspace/clang-aosp -maxdepth 1 -name "clang-r*" | head -n1)
         export PATH=$CLANG_DIR/bin:$PATH
         
-        # 补全交叉工具链软链接 (针对 4.14 常用的前缀)
+        # 补全交叉工具链软链接
         for tool in gcc g++ ld objcopy objdump nm strip ar as ranlib; do
           sudo ln -sf /usr/bin/aarch64-linux-gnu-$tool /usr/bin/aarch64-linux-android-$tool || true
-          sudo ln -sf /usr/bin/arm-linux-gnueabi-$tool /usr/bin/arm-linux-androideabi-$tool || true
         done
         
-        # 【关键修复】修改编译器选项 (4.14 配置)
+        # 2. 关键编译器选项
         export CC="ccache clang"
         export HOSTCC="ccache clang"
         export HOSTCXX="ccache clang++"
         export CLANG_TRIPLE=aarch64-linux-gnu-
-        # 注意：4.14 通常使用 aarch64-linux-android- 前缀
         export CROSS_COMPILE=aarch64-linux-android-
         export CROSS_COMPILE_ARM32=arm-linux-androideabi-
         
-        # 【核心变更】强制使用 GNU 汇编器 (IAS=0) - 解决 operand mismatch 的关键
+        # 【重要修复】强制使用 GNU 汇编器 (解决 Clang 语法不兼容问题)
         export LLVM_IAS=0 
-        # 忽略数组越界警告
         export KBUILD_CFLAGS="-Wno-array-bounds"
-        
-        echo "=== 环境检查 ==="
-        echo "Clang: $(clang --version | head -n1)"
-        alias python=python3
-        echo "Python: $(python --version)"
-        echo "CC: $CC"
-        echo "LLVM_IAS: $LLVM_IAS"
-        echo "CROSS_COMPILE: $CROSS_COMPILE"
     
-        # 2. 内核配置
-        # Redmi 10X Pro (MT6873) 的配置文件通常名为 mt6873_defconfig 或 vendor 特定名
-        # 请根据你仓库中 arch/arm64/configs/ 目录下的实际文件名修改
-        make O=out ARCH=arm64 mt6873_defconfig 
-        
-        # 如果上面报错，请尝试查找具体的 defconfig 名字，例如：
-        # make O=out ARCH=arm64 vendor/redfin_permissive_defconfig
-    
-        # 【修复】DTC 补丁 (4.14 特有)
-        echo "=== Patching DTC for yylloc ==="
-        if [ -f scripts/dtc/dtc-lexer.l ]; then
-          sed -i 's/^YYLTYPE yylloc;/extern YYLTYPE yylloc;/g' scripts/dtc/dtc-lexer.l
-        fi
-    
-        # 【修复】Stack Protector
-        echo "=== Disabling Stack Protector ==="
-        # 直接修改 .config 文件 (4.14 选项名可能略有不同)
-        sed -i 's/CONFIG_CC_STACKPROTECTOR_STRONG=y/# CONFIG_CC_STACKPROTECTOR_STRONG is not set/g' out/.config
-        sed -i 's/CONFIG_CC_STACKPROTECTOR_REGULAR=y/# CONFIG_CC_STACKPROTECTOR_REGULAR is not set/g' out/.config
-        sed -i 's/# CONFIG_CC_STACKPROTECTOR_NONE is not set/CONFIG_CC_STACKPROTECTOR_NONE=y/g' out/.config
+        # 3. 应用配置 (这一步会根据 .config 自动处理依赖)
         make O=out ARCH=arm64 olddefconfig
     
         # ===================================================================
-        # 【终极修复】Clang 兼容性补丁 (Kernel 4.14 专用版)
+        # 【针对性修复】根据你的配置文件，某些模块可能需要微调
         # ===================================================================
-        echo "=== Applying Clang Patches for Kernel 4.14 ==="
+        
+        # 修复 1: 如果配置中启用了 LTO (链接时优化)，Clang 可能会报错
+        # 我们在 .config 中已经看到 CONFIG_LTO_CLANG=y，这通常没问题，但如果报错，可以尝试关闭
+        # sed -i 's/CONFIG_LTO_CLANG=y/# CONFIG_LTO_CLANG is not set/g' out/.config
+        # sed -i 's/CONFIG_LTO=y/# CONFIG_LTO is not set/g' out/.config
+        
+        # 修复 2: 强制关闭 Stack Protector (如果之前报错)
+        sed -i 's/CONFIG_CC_STACKPROTECTOR_STRONG=y/# CONFIG_CC_STACKPROTECTOR_STRONG is not set/g' out/.config
+        sed -i 's/CONFIG_CC_STACKPROTECTOR_REGULAR=y/# CONFIG_CC_STACKPROTECTOR_REGULAR is not set/g' out/.config
+        sed -i 's/# CONFIG_CC_STACKPROTECTOR_NONE is not set/CONFIG_CC_STACKPROTECTOR_NONE=y/g' out/.config
+        
+        # 重新生成配置
+        make O=out ARCH=arm64 olddefconfig
     
-        # -------------------------------------------------------------------
-        # 修复 1: spinlock.h (4.14 宏屏蔽法)
-        # -------------------------------------------------------------------
-        # 原理：4.14 的 spinlock.h 中定义了 __LL_SC_ATOMIC 和 __LSE_PREAMBLE
-        # 这些定义与 Clang 不兼容。我们直接注释掉这些定义，让代码使用默认的通用汇编。
+        # ===================================================================
+        # 【终极防线】Clang 兼容性补丁 (Kernel 4.14 专用)
+        # ===================================================================
+        # 即使使用了原厂配置，编译器本身的语法限制仍需处理
+        echo "=== 应用 Clang 兼容性补丁 ==="
+    
+        # 修复 spinlock.h (4.14 版本)
         if [ -f arch/arm64/include/asm/spinlock.h ]; then
-          # 备份原文件
-          cp arch/arm64/include/asm/spinlock.h arch/arm64/include/asm/spinlock.h.bak
-          
-          # 1. 注释掉 __LL_SC_ATOMIC 的定义 (如果存在)
-          sed -i 's/^#define __LL_SC_ATOMIC.*$/\/\/ #define __LL_SC_ATOMIC (Disabled for Clang)/' arch/arm64/include/asm/spinlock.h
-          
-          # 2. 注释掉 __LSE_PREAMBLE 的定义 (如果存在)
-          sed -i 's/^#define __LSE_PREAMBLE.*$/\/\/ #define __LSE_PREAMBLE (Disabled for Clang)/' arch/arm64/include/asm/spinlock.h
-          
-          # 3. 确保没有包含 linux/atomic/atomic-lse.h (4.14 通常不包含，但以防万一)
-          sed -i '/atomic-lse.h/d' arch/arm64/include/asm/spinlock.h
-          
-          echo "✅ Patched spinlock.h (4.14 - Disabled problematic macros)"
-        else
-          echo "⚠️ spinlock.h not found! Check kernel source path."
+          # 方法：注释掉导致 Clang 报错的宏
+          sed -i 's/^#define __LL_SC_ATOMIC/#\/\/ #define __LL_SC_ATOMIC/' arch/arm64/include/asm/spinlock.h
+          sed -i 's/^#define __LSE_PREAMBLE/#\/\/ #define __LSE_PREAMBLE/' arch/arm64/include/asm/spinlock.h
+          echo "✅ 修复 spinlock.h"
         fi
     
-        # -------------------------------------------------------------------
-        # 修复 2: stack_pointer.h (4.14 通用修复)
-        # -------------------------------------------------------------------
-        # 大多数 4.14 源码不需要重写这个，但如果报错，使用此标准修复
-        # 这里我们只在检测到报错模式时才应用，或者直接定义寄存器
-        # 4.14 通常通过 ptrace.h 获取 sp，如果报错，尝试强制定义
-        # 注意：4.14 很少在这个文件报错，如果没报错可以跳过此步
-        # 如果你确定需要强制修复，取消下面的注释：
-        
-        # cat > arch/arm64/include/asm/stack_pointer.h << 'EOF'
-        # #ifndef __ASM_STACK_POINTER_H
-        # #define __ASM_STACK_POINTER_H
-        # #ifdef __KERNEL__
-        # #include <asm/ptrace.h>
-        # #endif
-        # #endif
-        # EOF
-        # echo "✅ Restored stock stack_pointer.h"
-        
-        # -------------------------------------------------------------------
-        # 修复 3: xts.c (通用修复)
-        # -------------------------------------------------------------------
-        if [ -f crypto/xts.c ]; then
-          sed -i '/inst->free/d' crypto/xts.c
-          sed -i '/inst->init = xts_init;/a \ \ \ \ inst->free = NULL;' crypto/xts.c
-          echo "✅ Patched crypto/xts.c"
-        fi
-    
-        # 5. 最终编译
-        echo "=== Starting Kernel Build ==="
-        # 增加 V=1 可以在报错时显示完整命令，方便调试
-        make -j$(nproc --all) O=out ARCH=arm64 V=1
+        # 4. 开始编译
+        echo "=== 开始编译 ==="
+        make -j$(nproc --all) O=out ARCH=arm64 Image.gz-dtb
         
         # 检查输出
-        if [ -f out/arch/arm64/boot/Image.gz ]; then
-          echo "Kernel built successfully"
+        if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
+          echo "🎉 编译成功！"
           exit 0
         else
-          echo "Build failed"
+          echo "❌ 编译失败"
           exit 1
         fi
       shell: /usr/bin/bash -e {0}
-      env:
-        # 请务必确认你的仓库分支名
-        # 天玑820 (MT6873) 的分支通常叫 mt6873-android-10 或 android-10
-        KERNEL_SOURCE_BRANCH: mt6873-android-10 
-                      
+  # --------------------------------------------------------------------------------------------------------------------------                    
     - name: 准备打包内核
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
