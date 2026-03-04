@@ -162,6 +162,14 @@ jobs:
           echo "⚠️ spinlock.h 未找到！请检查内核源码路径。"
         fi
         
+        # ===================================================================
+        # 【终极修复】跳过 MTK DrvGen 错误 (解决 dtboimg.cfg 问题)
+        # ===================================================================
+        echo "=== 修复 Makefile (跳过 DrvGen) ==="
+        # 注释掉导致 dtboimg.cfg 报错的行
+        sed -i 's/include scripts\/drvgen\/drvgen.mk/#include scripts\/drvgen\/drvgen.mk/g' Makefile
+        echo "✅ 已跳过 DrvGen 阶段"
+        
         # 4. 开始编译
         echo "=== 开始编译内核 ==="
         make -j$(nproc --all) O=out ARCH=arm64 Image.gz-dtb
@@ -175,6 +183,16 @@ jobs:
           exit 1
         fi
       shell: /usr/bin/bash -e {0}
+      env:
+        KERNEL_SOURCE: https://github.com/MiCode/Xiaomi_Kernel_OpenSource
+        KERNEL_SOURCE_BRANCH: cezanne-q-oss
+        KERNEL_CONFIG: bomb_user_defconfig
+        KERNEL_ZIP_NAME: vince_lxc-docker-kernel-4.14.186
+        LLVM_CONFIG: n
+        ENABLE_KERNELSU: false
+        KERNELSU_TAG: main
+        ENABLE_KVM: false
+        ENABLE_LXC_DOCKER: true
   # --------------------------------------------------------------------------------------------------------------------------                    
     - name: 准备打包内核
       run: |
