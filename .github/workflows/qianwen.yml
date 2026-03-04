@@ -4,7 +4,7 @@ on:
 
 jobs:
   build:
-    name: Kernel Build
+    name: 
     runs-on: ubuntu-22.04  
     if: github.event.repository.owner.id == github.event.sender.id
     
@@ -13,43 +13,53 @@ jobs:
 
     - name: 环境变量配置
       run: |
-        # 读取配置文件，注意：请确保 config.env 存在于仓库根目录
-        if [ -f config.env ]; then
-          export $(cat config.env | xargs)
-          echo "KERNEL_SOURCE=$(cat config.env | grep KERNEL_SOURCE | cut -d '=' -f2)" >> $GITHUB_ENV
-          echo "KERNEL_SOURCE_BRANCH=$(cat config.env | grep KERNEL_SOURCE_BRANCH | cut -d '=' -f2)" >> $GITHUB_ENV
-          echo "KERNEL_CONFIG=$(cat config.env | grep KERNEL_CONFIG | cut -d '=' -f2)" >> $GITHUB_ENV
-          echo "KERNEL_ZIP_NAME=$(cat config.env | grep KERNEL_ZIP_NAME | cut -d '=' -f2)" >> $GITHUB_ENV
-          echo "ENABLE_LXC_DOCKER=$(cat config.env | grep ENABLE_LXC_DOCKER | cut -d '=' -f2)" >> $GITHUB_ENV
-        else
-          echo "⚠️ config.env 未找到，使用默认环境变量"
-        fi
+        cat config.env | grep KERNEL_SOURCE= >> $GITHUB_ENV
+        cat config.env | grep KERNEL_SOURCE_BRANCH= >> $GITHUB_ENV
+        cat config.env | grep KERNEL_CONFIG= >> $GITHUB_ENV
+        cat config.env | grep KERNEL_ZIP_NAME= >> $GITHUB_ENV
+        cat config.env | grep LLVM_CONFIG= >> $GITHUB_ENV
+        cat config.env | grep ENABLE_KERNELSU= >> $GITHUB_ENV
+        cat config.env | grep KERNELSU_TAG= >> $GITHUB_ENV
+        cat config.env | grep ENABLE_KVM= >> $GITHUB_ENV
+        cat config.env | grep ENABLE_LXC_DOCKER= >> $GITHUB_ENV
+        cat config.env | grep ENABLE_KERNELSU= >> $GITHUB_ENV
+        cat config.env | grep KERNELSU_TAG= >> $GITHUB_ENV
 
     - name: 构建编译内核环境
       run: |
         sudo apt-get update
-        sudo -E apt-get -y -qq install git make bc bison ccache openssl zip kmod cpio flex libelf-dev curl libssl-dev libtfm-dev wget device-tree-compiler ca-certificates python3 binutils binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi build-essential gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi gcc-arm-linux-gnueabihf python2-minimal
-        # 设置 Python2 软链接
-        sudo ln -sf /usr/bin/python2 /usr/bin/python
+        sudo -E apt-get -y -qq install git make bc bison ccache openssl zip kmod cpio flex libelf-dev curl libssl-dev libtfm-dev wget device-tree-compiler ca-certificates python3 binutils binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi
+        sudo -E apt-get -y -qq install build-essential gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi gcc-arm-linux-gnueabihf
         mkdir -p $GITHUB_WORKSPACE/kernel_workspace
 
-    - name: 下载谷歌 Clang12 编译器
+    - name: 下载谷歌 Clang12 编译器（必须用这个！）
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
-        git clone -q --depth=1 --single-branch https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 -b android12-release clang-aosp
+        rm -rf clang-aosp
+        mkdir -p clang-aosp
+        git clone -q --depth=1 --single-branch \
+          https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 \
+          -b android12-release clang-aosp
+          
+    - name: 安装Python2 并设置为默认
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y python2-minimal
+        sudo ln -sf /usr/bin/python2 /usr/bin/python
+        python --version
+        echo "Python2 设置完成 ✅"
 
     - name: 下载内核源码
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
         git clone ${{ env.KERNEL_SOURCE }} -b ${{ env.KERNEL_SOURCE_BRANCH }} android-kernel --depth=1
 
-    - name: 开启LXC和Docker配置
+    - name: 开启lxc和docker配置
       if: env.ENABLE_LXC_DOCKER == 'true'
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
         wget https://github.com/ego-taboo/LXC-DOCKER-KernelSU_Action/releases/download/2.0.0/add-lxc-docker-custom3.sh
         chmod 755 add-lxc-docker-custom3.sh
-        # ⚠️ 注意：请确保 KERNEL_CONFIG 变量正确，且源码中存在该文件
         ./add-lxc-docker-custom3.sh android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
         echo "# CONFIG_ANDROID_PARANOID_NETWORK is not set" >> android-kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
 
@@ -58,107 +68,44 @@ jobs:
         cd $GITHUB_WORKSPACE/kernel_workspace
         wget https://github.com/ego-taboo/LXC-DOCKER-KernelSU_Action/releases/download/1.0.0/runcpatch.sh
         chmod a+x runcpatch.sh
-        # 自动检测 cgroup.c 路径
         if [ -f android-kernel/kernel/cgroup.c ]; then
-          ./runcpatch.sh android-kernel/kernel/cgroup.c               
-        elif [ -f android-kernel/kernel/cgroup/cgroup.c ]; then
-          ./runcpatch.sh android-kernel/kernel/cgroup/cgroup.c               
-        else
-          echo "❌ 未找到 cgroup.c 文件，跳过补丁"
+        ./runcpatch.sh android-kernel/kernel/cgroup.c               
+        fi
+        if [ -f android-kernel/kernel/cgroup/cgroup.c ]; then
+        ./runcpatch.sh android-kernel/kernel/cgroup/cgroup.c               
         fi
 
     - name: 设置ccache缓存
       uses: hendrikmuhs/ccache-action@v1.2
       with:
-        key: build-kernel
+        key: build-kernel-mido-kernel
         max-size: 2G
 
-    - name: 准备内核配置文件
+    - name: 准备内核配置文件 (使用提取的原厂配置)
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        # 检查配置文件是否存在
-        if [ ! -f "arch/arm64/configs/${{ env.KERNEL_CONFIG }}" ]; then
-          echo "❌ 错误：配置文件 arch/arm64/configs/${{ env.KERNEL_CONFIG }} 不存在！"
-          echo "💡 请检查 KERNEL_CONFIG 变量是否与源码分支匹配（例如 cezanne 需要 cezanne_defconfig）"
+        cp $GITHUB_WORKSPACE/config.txt .config
+        if [ -f ".config" ]; then
+          echo "✅ 成功加载原厂配置文件"
+          echo "内核版本: $(grep "Linux/arm64" .config | head -n1)"
+        else
+          echo "❌ 错误：未找到配置文件"
           exit 1
         fi
-        # 复制配置
-        cp arch/arm64/configs/${{ env.KERNEL_CONFIG }} .config
-        echo "✅ 成功加载配置文件: ${{ env.KERNEL_CONFIG }}"
-
-    - name: 开始编译内核
-      run: |
-        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        
-        # 1. 工具链路径
-        CLANG_DIR=$(find $GITHUB_WORKSPACE/kernel_workspace/clang-aosp -maxdepth 1 -name "clang-r*" | head -n1)
-        export PATH=$CLANG_DIR/bin:$PATH
-        
-        # 2. 交叉编译工具链软链接
-        for tool in gcc g++ ld objcopy objdump nm strip ar as ranlib; do
-          sudo ln -sf /usr/bin/aarch64-linux-gnu-$tool /usr/bin/aarch64-linux-android-$tool || true
-        done
-        
-        # 3. 编译器环境变量
-        export CC="ccache clang"
-        export HOSTCC="ccache clang"
-        export HOSTCXX="ccache clang++"
-        export CLANG_TRIPLE=aarch64-linux-gnu-
-        export CROSS_COMPILE=aarch64-linux-android-
-        export CROSS_COMPILE_ARM32=arm-linux-androideabi-
-        export LLVM_IAS=0
-        export KBUILD_CFLAGS="-Wno-array-bounds"
-
-        # 4. 配置与修复
-        make O=out ARCH=arm64 olddefconfig
-        
-        # 关闭不兼容选项 (LTO/StackProtector)
-        sed -i 's/CONFIG_LTO_CLANG=y/# CONFIG_LTO_CLANG is not set/g' out/.config
-        sed -i 's/CONFIG_LTO=y/# CONFIG_LTO is not set/g' out/.config
-        sed -i 's/CONFIG_CC_STACKPROTECTOR_STRONG=y/# CONFIG_CC_STACKPROTECTOR_STRONG is not set/g' out/.config
-        sed -i 's/CONFIG_CC_STACKPROTECTOR_REGULAR=y/# CONFIG_CC_STACKPROTECTOR_REGULAR is not set/g' out/.config
-        sed -i 's/# CONFIG_CC_STACKPROTECTOR_NONE is not set/CONFIG_CC_STACKPROTECTOR_NONE=y/g' out/.config
-        make O=out ARCH=arm64 olddefconfig
-        
-        # Clang 兼容性补丁 (Spinlock)
-        if [ -f arch/arm64/include/asm/spinlock.h ]; then
-          sed -i 's/^#define __LL_SC_ATOMIC.*$/\/\/ #define __LL_SC_ATOMIC (Disabled for Clang)/' arch/arm64/include/asm/spinlock.h
-          sed -i 's/^#define __LSE_PREAMBLE.*$/\/\/ #define __LSE_PREAMBLE (Disabled for Clang)/' arch/arm64/include/asm/spinlock.h
-        fi
-        
-        # ⚠️ MTK DrvGen 修复 (关键)
-        sed -i 's/include scripts\/drvgen\/drvgen.mk/#include scripts\/drvgen\/drvgen.mk/g' Makefile
-
-        # 5. 执行编译
-        # ⚠️ 注意：如果编译报错找不到 Image.gz-dtb，请尝试改为 Image.gz
-        make -j$(nproc --all) O=out ARCH=arm64 Image.gz-dtb
-
-        # 6. 验证编译结果
-        if [ ! -f out/arch/arm64/boot/Image.gz-dtb ]; then
-          echo "❌ 编译失败！未找到内核镜像文件。"
-          exit 1
-        fi
-        echo "🎉 内核编译成功！"
 
     - name: 准备打包内核
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
-        git clone --depth=1 https://github.com/osm0sis/AnyKernel3
-        # ⚠️ 修复变量名：IS_SLOT_DEVICE 和 do.devicecheck
+        git clone https://github.com/osm0sis/AnyKernel3
         sed -i 's/do.devicecheck=1/do.devicecheck=0/g' AnyKernel3/anykernel.sh
         sed -i 's!BLOCK=/dev/block/platform/omap/omap_hsmmc.0/by-name/boot;!BLOCK=/dev/block/bootdevice/by-name/boot;!g' AnyKernel3/anykernel.sh
-        sed -i 's/IS_SLOT_DEVICE=1/IS_SLOT_DEVICE=0/g' AnyKernel3/anykernel.sh
-        
-        # 复制内核文件
-        # ⚠️ 如果上一步编译的是 Image.gz，请将下面这行改为 Image.gz
+        sed -i 's/is_slot_device=1;/is_slot_device=0;/g' AnyKernel3/anykernel.sh
         cp android-kernel/out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
-        
-        # 清理无关文件
-        rm -rf AnyKernel3/.git* AnyKernel3/README.md AnyKernel3/ramdisk AnyKernel3/modules AnyKernel3/patch
+        rm -rf AnyKernel3/.git* AnyKernel3/README.md
+        rm -rf AnyKernel3/ramdisk AnyKernel3/modules AnyKernel3/patch
 
     - name: 打包并上传
       uses: actions/upload-artifact@v4
       with:
         name: ${{ env.KERNEL_ZIP_NAME }}
-        # ⚠️ 修复：直接上传文件夹
-        path: kernel_workspace/AnyKernel3/
+        path: kernel_workspace/AnyKernel3  # 修正：移除错误的"这是yml"字符串
