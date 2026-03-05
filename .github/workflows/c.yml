@@ -79,27 +79,17 @@ jobs:
         max-size: 2G
 
 
-    - name: Build Kernel修复
-      run: |
-        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        
-        # --- 自动化修复报错开始 ---
-        echo "Applying MTK printk fix..."
-        sed -i 's/extern bool mt_get_uartlog_status(void);/\/\/ extern bool mt_get_uartlog_status(void);/g' include/linux/printk.h
-        # --- 自动化修复报错结束 ---
-
-        export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/clang-r353983c/bin:$PATH
-        make O=out ARCH=arm64 bomb_user_defconfig
-        
-        if [ "${{ env.LLVM_CONFIG }}" = "y" ]; then
-          make -j$(nproc --all) CC="ccache clang" O=out ARCH=arm64 CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-" LLVM=1 LLVM_IAS=1
-        else
-          make -j$(nproc --all) CC="ccache clang" O=out ARCH=arm64 CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-"
-        fi
 
     - name: 开始编译内核
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
+
+                # --- 自动化修复报错开始 ---
+        echo "Applying MTK printk fix..."
+        sed -i 's/extern bool mt_get_uartlog_status(void);/\/\/ extern bool mt_get_uartlog_status(void);/g' include/linux/printk.h
+        # --- 自动化修复报错结束 ---
+
+        
         export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/clang-r353983c/bin:$PATH
         make O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
         if [ ${{env.LLVM_CONFIG}}=y ]; then
