@@ -79,19 +79,23 @@ jobs:
         max-size: 2G
 
 
-    - name: 修复 mt_get_uartlog_status 声明冲突
+    - name: Build Kernel修复
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
         
-        # 备份原始文件
-        cp drivers/misc/mediatek/include/mt-plat/mtk_printk_ctrl.h drivers/misc/mediatek/include/mt-plat/mtk_printk_ctrl.h.bak
-        
-        # 删除有问题的 extern 声明
-        sed -i '/extern bool mt_get_uartlog_status(void);/d' drivers/misc/mediatek/include/mt-plat/mtk_printk_ctrl.h
-        
-        echo "✅ 已修复 mt_get_uartlog_status 声明冲突"
-        echo "✅ 原始文件已备份到 mtk_printk_ctrl.h.bak"
+        # --- 自动化修复报错开始 ---
+        echo "Applying MTK printk fix..."
+        sed -i 's/extern bool mt_get_uartlog_status(void);/\/\/ extern bool mt_get_uartlog_status(void);/g' include/linux/printk.h
+        # --- 自动化修复报错结束 ---
 
+        export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/clang-r353983c/bin:$PATH
+        make O=out ARCH=arm64 bomb_user_defconfig
+        
+        if [ "${{ env.LLVM_CONFIG }}" = "y" ]; then
+          make -j$(nproc --all) CC="ccache clang" O=out ARCH=arm64 CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-" LLVM=1 LLVM_IAS=1
+        else
+          make -j$(nproc --all) CC="ccache clang" O=out ARCH=arm64 CROSS_COMPILE="aarch64-linux-gnu-" CROSS_COMPILE_ARM32="arm-linux-gnueabi-"
+        fi
 
     - name: 开始编译内核
       run: |
