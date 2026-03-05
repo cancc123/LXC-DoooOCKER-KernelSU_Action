@@ -95,34 +95,35 @@ jobs:
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
         
-        # 1. 设置 Proton Clang 路径
+        # 1. 设置路径
         export PATH=$GITHUB_WORKSPACE/kernel_workspace/proton-clang/bin:$PATH
         
         # 2. 准备编译配置
         make O=out ARCH=arm64 ${{ env.KERNEL_CONFIG }}
         
         # 3. 执行编译
-        # Proton Clang 建议直接使用 CC=clang，它会自动调用内部的交叉编译器
-        if [ "${{ env.LLVM_CONFIG }}" = "y" ]; then
-          make -j$(nproc --all) O=out \
-              ARCH=arm64 \
-              CC="ccache clang" \
-              AR=llvm-ar \
-              NM=llvm-nm \
-              OBJCOPY=llvm-objcopy \
-              OBJDUMP=llvm-objdump \
-              STRIP=llvm-strip \
-              CROSS_COMPILE=aarch64-linux-gnu- \
-              CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-              LLVM=1 LLVM_IAS=1
-        else
-          make -j$(nproc --all) O=out \
-              ARCH=arm64 \
-              CC="ccache clang" \
-              CROSS_COMPILE=aarch64-linux-gnu- \
-              CROSS_COMPILE_ARM32=arm-linux-gnueabi-
-        fi
-      
+        # 核心改动：显式指定 AS=aarch64-linux-gnu-as，避开 Proton 目录下的 'as' 包装
+        # 同时增加 CLANG_TRIPLE 指向，这是 Clang 编译 4.14 内核的关键
+        make -j$(nproc --all) O=out \
+            ARCH=arm64 \
+            CC="ccache clang" \
+            AS=aarch64-linux-gnu-as \
+            LD=ld.lld \
+            AR=llvm-ar \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            OBJSIZE=llvm-size \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            HOSTCC=clang \
+            HOSTCXX=clang++ \
+            HOSTAR=llvm-ar \
+            HOSTLD=ld.lld
+
+            
     - name: 准备打包内核
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace
