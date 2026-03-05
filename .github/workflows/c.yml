@@ -79,23 +79,18 @@ jobs:
         max-size: 2G
 
 
-    - name: 应用修复补丁 (解决 mt_get_uartlog_status 声明冲突)
+    - name: 修复 mt_get_uartlog_status 声明冲突
       run: |
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        echo "diff --git a/drivers/misc/mediatek/include/mt-plat/mtk_printk_ctrl.h b/drivers/misc/mediatek/include/mt-plat/mtk_printk_ctrl.h
-        index 1234567..abcdef8 100644
-        --- a/drivers/misc/mediatek/include/mt-plat/mtk_printk_ctrl.h
-        +++ b/drivers/misc/mediatek/include/mt-plat/mtk_printk_ctrl.h
-        @@ -14,7 +14,6 @@
-         #define MTK_PRINTK_CTRL_H
-         
-         #include <linux/printk.h>
-        -extern bool mt_get_uartlog_status(void);
-         
-         #endif" > mtk-printk-fix.patch
-        git apply mtk-printk-fix.patch
+        
+        # 备份原始文件
+        cp drivers/misc/mediatek/include/mt-plat/mtk_printk_ctrl.h drivers/misc/mediatek/include/mt-plat/mtk_printk_ctrl.h.bak
+        
+        # 删除有问题的 extern 声明
+        sed -i '/extern bool mt_get_uartlog_status(void);/d' drivers/misc/mediatek/include/mt-plat/mtk_printk_ctrl.h
+        
         echo "✅ 已修复 mt_get_uartlog_status 声明冲突"
-
+        echo "✅ 原始文件已备份到 mtk_printk_ctrl.h.bak"
 
 
     - name: 开始编译内核
