@@ -39,7 +39,7 @@ jobs:
         mkdir -p clang-aosp
         git clone -q --depth=1 --single-branch \
           https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 
-              -b clang-r353983c clang-aosp
+              -b clang-r383902b clang-aosp
           
     - name: 安装Python2 并设置为默认
       run: |
