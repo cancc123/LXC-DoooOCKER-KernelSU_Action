@@ -85,7 +85,14 @@ jobs:
         # 进入内核源码目录
 
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        make mrproper
+        make O=out ARCH=arm64 bomb_user_defconfig
+        # 将配置片段追加到 .config
+        cat <<EOF >> out/.config
+        CONFIG_STACKTRACE=y
+        # 可以添加其他需要的选项
+        EOF
+        # 更新配置
+        make O=out ARCH=arm64 olddefconfig
         
         # 其他修复（不需要修改 stack_trace 相关）
         echo "Applying MTK printk fix..." 
@@ -98,7 +105,6 @@ jobs:
         sed -i '4495s/int i = 0;/\/\/ int i = 0;/' kernel/sched/core.c
         
         # 生成配置
-        make O=out ARCH=arm64 bomb_user_defconfig
         
         # 设置编译器路径
         export PATH=$GITHUB_WORKSPACE/kernel_workspace/clang-aosp/clang-r353983c/bin:$PATH
