@@ -88,6 +88,9 @@ jobs:
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
         # 修复 net/core/dev.c 和 net/core/rtnetlink.c 中的 stack_trace 错误
 
+
+        
+        sed -i '/#ifdef CONFIG_MTK_NET_LOGGING/,/#endif/ s/^/\/\//' net/core/rtnetlink.c
         # 在 #include <linux/rtnetlink.h> 之后添加 #include <linux/stacktrace.h>
         sed -i '/#include <linux\/rtnetlink.h>/a#include <linux/stacktrace.h>' net/core/rtnetlink.c
 
