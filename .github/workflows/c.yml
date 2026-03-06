@@ -92,7 +92,7 @@ jobs:
         make O=out ARCH=arm64 bomb_user_defconfig
 
         
-        # sed -i '/#ifdef CONFIG_MTK_NET_LOGGING/,/#endif/ s/^/\/\//' net/core/rtnetlink.c
+        sed -i '/#ifdef CONFIG_MTK_NET_LOGGING/,/#endif/ s/^/\/\//' net/core/rtnetlink.c
         
         # 修复 stack_trace 错误
         echo "Fixing stack_trace error in net/core/dev.c and net/core/rtnetlink.c..."
