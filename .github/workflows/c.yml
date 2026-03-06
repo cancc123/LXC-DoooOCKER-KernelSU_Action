@@ -91,14 +91,6 @@ jobs:
         # 生成配置
         make O=out ARCH=arm64 bomb_user_defconfig
         
-        sed -i 's/# CONFIG_STACKTRACE_SUPPORT is not set/CONFIG_STACKTRACE_SUPPORT=y/' out/.config
-        sed -i 's/# CONFIG_STACKTRACE is not set/CONFIG_STACKTRACE=y/' out/.config
-        
-        if ! grep -q "#include <linux/stacktrace.h>" net/core/rtnetlink.c; then
-        sed -i '/#include <net\/rtnetlink.h>/a #include <linux/stacktrace.h>' net/core/rtnetlink.c
-        fi
-
-
         
         # 1. 之前的修复：解决 printk 冲突
         echo "Applying MTK printk fix..."
@@ -120,8 +112,6 @@ jobs:
         # 清理编译缓存
         rm -rf out
         
-        # 确认配置已正确应用
-        grep CONFIG_STACKTRACE .config
 
 
 
