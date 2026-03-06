@@ -85,7 +85,7 @@ jobs:
         # 进入内核源码目录
 
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-
+        make mrproper
         
         # 其他修复（不需要修改 stack_trace 相关）
         echo "Applying MTK printk fix..." 
