@@ -82,29 +82,30 @@ jobs:
 
     - name: 开始编译内核
       run: |
-        cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-
         # 进入内核源码目录
         cd $GITHUB_WORKSPACE/kernel_workspace/android-kernel
-        # 修复 net/core/dev.c 和 net/core/rtnetlink.c 中的 stack_trace 错误
         
-        # 生成配置
-        make O=out ARCH=arm64 bomb_user_defconfig
-        echo "CONFIG_STACKTRACE=y" >> .config
+        # 1. 修复网络部分的 stack_trace 错误
+        echo "Fixing stack_trace in net/core/..."
+        sed -i 's/struct stack_trace trace;/\/\/ struct stack_trace trace;/g' net/core/dev.c
+        sed -i 's/save_stack_trace(&trace);/\/\/ save_stack_trace(\&trace);/g' net/core/dev.c
+        sed -i 's/struct stack_trace trace;/\/\/ struct stack_trace trace;/g' net/core/rtnetlink.c
+        sed -i 's/save_stack_trace(&trace);/\/\/ save_stack_trace(\&trace);/g' net/core/rtnetlink.c
         
-        # 1. 之前的修复：解决 printk 冲突
+        # 2. 解决 printk 冲突
         echo "Applying MTK printk fix..."
         sed -i 's/extern bool mt_get_uartlog_status(void);/\/\/ extern bool mt_get_uartlog_status(void);/g' include/linux/printk.h
         
-        # 2. 新修复：修复 kernel/sched/core.c 中的 nohz 报错
-        # 我们直接把报错的那几行逻辑注释掉，因为在没有 NO_HZ 的配置下这段代码无效
+        # 3. 修复调度器中的 nohz 报错 (不依赖行号)
         echo "Fixing nohz_flags in scheduler..."
-        sed -i '7177s/if (!test_and_set_bit(NOHZ_BALANCE_KICK, nohz_flags(cpu)))/\/\/ if (false)/' kernel/sched/core.c
+        sed -i 's/if (!test_and_set_bit(NOHZ_BALANCE_KICK, nohz_flags(cpu)))/if (false \&\& cpu)/g' kernel/sched/core.c
         
-        # 3. 新修复：修复 kernel/sched/core.c 中的未使用变量 i (第4495行)
+        # 4. 修复 kernel/sched/core.c 中的未使用变量 i
         echo "Fixing unused variable i..."
-        sed -i '4495s/int i = 0;/\/\/ int i = 0;/' kernel/sched/core.c
-
+        sed -i 's/int i = 0;/\/\/ int i = 0;/g' kernel/sched/core.c
+        
+        # 5. 生成配置
+        make O=out ARCH=arm64 bomb_user_defconfig
 
 
 
