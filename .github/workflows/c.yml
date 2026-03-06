@@ -106,13 +106,6 @@ jobs:
         sed -i '4495s/int i = 0;/\/\/ int i = 0;/' kernel/sched/core.c
 
 
-        # 关键步骤：应用新配置
-        make oldconfig
-        
-        # 清理编译缓存
-        rm -rf out
-        
-
 
 
         
