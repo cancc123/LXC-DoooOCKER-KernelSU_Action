@@ -89,6 +89,13 @@ jobs:
         # 将配置片段追加到 .config
         cat <<EOF >> out/.config
         CONFIG_STACKTRACE=y
+        CONFIG_NO_HZ=y
+        CONFIG_NO_HZ_IDLE=y
+        CONFIG_SCHED_EAS=y
+        CONFIG_UCLAMP_TASK=y
+        CONFIG_MTK_UART=y
+        CONFIG_RTC_LIB=y
+                
         # 可以添加其他需要的选项
         EOF
         # 更新配置
