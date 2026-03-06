@@ -92,7 +92,17 @@ jobs:
         make O=out ARCH=arm64 bomb_user_defconfig
 
         
-        sed -i '/#ifdef CONFIG_MTK_NET_LOGGING/,/#endif/ s/^/\/\//' net/core/rtnetlink.c
+        # sed -i '/#ifdef CONFIG_MTK_NET_LOGGING/,/#endif/ s/^/\/\//' net/core/rtnetlink.c
+        
+        # 修复 stack_trace 错误
+        echo "Fixing stack_trace error in net/core/dev.c and net/core/rtnetlink.c..."
+        sed -i '/#include <linux\/netdevice.h>/a #include <linux/stacktrace.h>' net/core/dev.c
+        sed -i '/#include <net\/rtnetlink.h>/a #include <linux/stacktrace.h>' net/core/rtnetlink.c
+        echo "✅ Fixed stack_trace error"
+        # 验证添加
+        grep "stacktrace.h" net/core/rtnetlink.c && echo "Include added successfully" || echo "Failed to add include!"
+
+        
         # 在 #include <linux/rtnetlink.h> 之后添加 #include <linux/stacktrace.h>
         sed -i '/#include <linux\/rtnetlink.h>/a#include <linux/stacktrace.h>' net/core/rtnetlink.c
 
