@@ -90,13 +90,6 @@ jobs:
         # 生成配置
         make O=out ARCH=arm64 bomb_user_defconfig
         
-        # 关键修复：禁用 CONFIG_MTK_NET_LOGGING（不再需要 CONFIG_STACKTRACE）
-        sed -i 's/CONFIG_MTK_NET_LOGGING=y/CONFIG_MTK_NET_LOGGING=n/' .config || echo "CONFIG_MTK_NET_LOGGING=n" >> .config
-        
-        # 验证配置
-        echo "Config check:"
-        grep CONFIG_MTK_NET_LOGGING .config
-        
         # 其他修复（不需要修改 stack_trace 相关）
         echo "Applying MTK printk fix..." 
         sed -i 's/extern bool mt_get_uartlog_status(void);/\/\/ extern bool mt_get_uartlog_status(void);/g' include/linux/printk.h
