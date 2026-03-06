@@ -95,6 +95,8 @@ jobs:
         CONFIG_UCLAMP_TASK=y
         CONFIG_MTK_UART=y
         CONFIG_RTC_LIB=y
+        CONFIG_RTC_CLASS=y
+        CONFIG_SERIAL_8250_MT6577=y
                 
         # 可以添加其他需要的选项
         EOF
