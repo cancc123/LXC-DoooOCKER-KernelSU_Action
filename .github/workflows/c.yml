@@ -89,9 +89,10 @@ jobs:
         # 修复 net/core/dev.c 和 net/core/rtnetlink.c 中的 stack_trace 错误
 
         # 修复声明
+        # 修复 net/core/dev.c 和 net/core/rtnetlink.c 中的 stack_trace 错误
         echo "Fixing stack_trace error in net/core/dev.c and net/core/rtnetlink.c..."
-        sed -i '/^#include <linux\/netdevice.h>/a#include <linux/stacktrace.h>' net/core/dev.c
-        sed -i '/^#include <linux\/rtnetlink.h>/a#include <linux/stacktrace.h>' net/core/rtnetlink.c
+        sed -i '/#include <linux\/netdevice.h>/a#include <linux/stacktrace.h>' net/core/dev.c
+        sed -i '/#include <linux\/rtnetlink.h>/a#include <linux/stacktrace.h>' net/core/rtnetlink.c
         echo "✅ Fixed stack_trace error"
 
         
