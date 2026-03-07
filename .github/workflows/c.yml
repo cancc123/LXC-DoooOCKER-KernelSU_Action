@@ -96,7 +96,15 @@ jobs:
         echo "CONFIG_RTC_LIB=y" >> out/.config
         echo "CONFIG_RTC_CLASS=y" >> out/.config
         echo "CONFIG_STACKTRACE=y" >> out/.config
-
+        # 确保这些配置是唯一添加的
+        echo "CONFIG_SCHED_EAS=y" >> out/.config
+        echo "CONFIG_UCLAMP_TASK=y" >> out/.config
+        echo "CONFIG_SERIAL_MTK=y" >> out/.config
+        echo "CONFIG_NO_HZ=y" >> out/.config
+        echo "CONFIG_NO_HZ_IDLE=y" >> out/.config
+        echo "CONFIG_RTC_LIB=y" >> out/.config
+        echo "CONFIG_RTC_CLASS=y" >> out/.config
+        echo "CONFIG_STACKTRACE=y" >> out/.config
         # 更新配置
         make O=out ARCH=arm64 olddefconfig
 
