@@ -88,14 +88,12 @@ jobs:
         make O=out ARCH=arm64 bomb_user_defconfig
         # 将配置片段追加到 .config
         # 在编译前添加正确的配置
-        echo "CONFIG_SCHED_EAS=y" >> out/.config
-        echo "CONFIG_UCLAMP_TASK=y" >> out/.config
+
+        # 从 .config 中移除 CONFIG_SCHED_EAS
+        sed -i '/CONFIG_SCHED_EAS/d' out/.config
+        # 添加必要的串口配置
+        echo "CONFIG_SERIAL=y" >> out/.config
         echo "CONFIG_SERIAL_MTK=y" >> out/.config
-        echo "CONFIG_NO_HZ=y" >> out/.config
-        echo "CONFIG_NO_HZ_IDLE=y" >> out/.config
-        echo "CONFIG_RTC_LIB=y" >> out/.config
-        echo "CONFIG_RTC_CLASS=y" >> out/.config
-        echo "CONFIG_STACKTRACE=y" >> out/.config
         make O=out ARCH=arm64 olddefconfig
 
         
