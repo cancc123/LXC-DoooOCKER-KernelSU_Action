@@ -99,6 +99,8 @@ jobs:
 
         # 更新配置
         make O=out ARCH=arm64 olddefconfig
+
+        
         cat > out/defconfig_fragment << EOF
         CONFIG_SCHED_EAS=y
         CONFIG_UCLAMP_TASK=y
@@ -114,6 +116,8 @@ jobs:
         CONFIG_STACKDEPOT=y
         EOF
         
+        # 关键！把 fragment 真正追加进去
+        cat out/defconfig_fragment >> out/.config
         
         # 其他修复（不需要修改 stack_trace 相关）
         echo "Applying MTK printk fix..." 
