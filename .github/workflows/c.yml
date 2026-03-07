@@ -109,6 +109,7 @@ jobs:
         CONFIG_SERIAL_8250_MT6577=y
         CONFIG_NO_HZ_COMMON=y
         CONFIG_NO_HZ_FULL=y
+        CONFIG_NO_HZ_FULL_ALL=n          # 关键！解决交互提示
         CONFIG_RTC_LIB=y
         CONFIG_RTC_CLASS=y
         CONFIG_STACKTRACE=y
@@ -116,7 +117,6 @@ jobs:
         CONFIG_STACKDEPOT=y
         EOF
         
-        # 关键！把 fragment 真正追加进去
         cat out/defconfig_fragment >> out/.config
         
         # 其他修复（不需要修改 stack_trace 相关）
