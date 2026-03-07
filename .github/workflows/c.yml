@@ -109,27 +109,8 @@ jobs:
         make O=out ARCH=arm64 olddefconfig
 
         
-        cat > out/defconfig_fragment << EOF
-        CONFIG_SCHED_EAS=y
-        CONFIG_UCLAMP_TASK=y
-        CONFIG_UCLAMP_TASK_GROUP=y
-        CONFIG_SERIAL_MTK=y
-        CONFIG_SERIAL_8250_MT6577=y
-        CONFIG_NO_HZ_COMMON=y
-        CONFIG_NO_HZ_FULL=y
-        CONFIG_NO_HZ_FULL_ALL=n          # 关键！解决交互提示
-        CONFIG_RTC_LIB=y
-        CONFIG_RTC_CLASS=y
-        CONFIG_STACKTRACE=y
-        CONFIG_STACKTRACE_SUPPORT=y
-        CONFIG_STACKDEPOT=y
-        EOF
         
-        cat out/defconfig_fragment >> out/.config
-        
-        # 4. **非交互式** 更新配置（关键修复！）
-        yes "" | make O=out ARCH=arm64 olddefconfig
-        
+
         # 其他修复（不需要修改 stack_trace 相关）
         echo "Applying MTK printk fix..." 
         sed -i 's/extern bool mt_get_uartlog_status(void);/\/\/ extern bool mt_get_uartlog_status(void);/g' include/linux/printk.h
