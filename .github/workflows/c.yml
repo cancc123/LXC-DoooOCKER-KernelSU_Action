@@ -97,7 +97,13 @@ jobs:
         CONFIG_RTC_LIB=y
         CONFIG_RTC_CLASS=y
         CONFIG_SERIAL_8250_MT6577=y
-                
+        CONFIG_SCHED_EAS=y
+        CONFIG_UCLAMP_TASK=y
+        CONFIG_UCLAMP_ACTIVE=y
+        CONFIG_SERIAL_MEDIATEK=y
+        CONFIG_MTK_PLATFORM=y
+        CONFIG_MTK_COMMON=y
+                        
         # 可以添加其他需要的选项
         EOF
         # 更新配置
