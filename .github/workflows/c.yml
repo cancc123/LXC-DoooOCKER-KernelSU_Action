@@ -90,7 +90,7 @@ jobs:
         # 在编译前添加正确的配置
         echo "CONFIG_SCHED_EAS=y" >> out/.config
         echo "CONFIG_UCLAMP_TASK=y" >> out/.config
-        echo "CONFIG_SERIAL_MTK8250=y" >> out/.config
+        echo "CONFIG_SERIAL_MTK=y" >> out/.config
         echo "CONFIG_NO_HZ=y" >> out/.config
         echo "CONFIG_NO_HZ_IDLE=y" >> out/.config
         echo "CONFIG_RTC_LIB=y" >> out/.config
